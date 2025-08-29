@@ -1,8 +1,9 @@
 # spotify-imessage
 
-Sync **Spotify** tracks shared in an **iMessage** group chat into a Spotify playlist.
+Sync **Spotify** tracks into a Spotify playlist from various sources.
 
-- macOS only (reads your local `~/Library/Messages/chat.db`)
+- **iMessage mode**: Extract tracks from iMessage group chats (macOS only)
+- **File mode**: Add tracks from a text file containing track IDs
 - Picks up **plain links** and **rich-link** attachments (`.webloc` / `.url`)
 - Validates IDs, batches adds (100 per call), and **skips duplicates** by default
 - Uses Spotify OAuth with a persistent local cache
@@ -53,12 +54,42 @@ The OAuth token cache is stored at `~/.cache/spotify-imessage/spotify_token.json
 
 ## Usage
 
-Basic:
+### iMessage Mode (macOS only)
+
+Extract Spotify tracks from an iMessage group chat using `imessage-exporter`. This approach captures all rich link previews that Spotify sends:
 
 ```bash
-spotify-imessage \
+# First install imessage-exporter
+brew install imessage-exporter
+
+# Then run the command
+spotify-imessage imessage \
   --chat "My daughter is dating Kodak Black" \
   --playlist 1c68uZNKCUx7a1l6wr97D3
+```
+
+This mode:
+- Exports your entire iMessage database to TXT files using `imessage-exporter`
+- Uses `grep` to extract all Spotify track URLs from the exported files
+- Captures rich link previews that direct database queries might miss
+- Automatically cleans up exported files (use `--keep-export` to keep them)
+
+### File Mode
+
+Add Spotify tracks from a text file containing track IDs (one per line):
+
+```bash
+spotify-imessage file \
+  --file track_ids.txt \
+  --playlist 1c68uZNKCUx7a1l6wr97D3
+```
+
+Track file format:
+```
+# Comments start with #
+4iV5W9uYEdYUVa79Axb7Rh
+6rqhFgbbKwnb9MLmUQDhG6
+3CRDbSIZ4r5MsZ0YwxuEkn
 ```
 
 Common options:
@@ -71,10 +102,14 @@ Common options:
   (default: `~/.cache/spotify-imessage/spotify_token.json`)
 - `--client-id` / `--client-secret` / `--redirect-uri` — or set env vars
 
-Full help:
+
+
+### Full help:
 
 ```bash
 spotify-imessage --help
+spotify-imessage imessage --help
+spotify-imessage file --help
 ```
 
 ---
