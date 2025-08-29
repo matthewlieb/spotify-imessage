@@ -5,13 +5,55 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "spotify-imessage"
 version = "0.1.0"
-description = "Sync Spotify tracks shared in an iMessage group chat into a Spotify playlist."
+description = "Extract Spotify tracks from iMessage conversations and manage them in Spotify playlists"
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
-authors = [{name = "Your Name", email = "you@example.com"}]
-keywords = ["spotify", "imessage", "playlist", "automation", "cli"]
-dependencies = ["click>=8,<9", "spotipy>=2.23,<3"]
+authors = [
+    {name = "Matthew Lieb", email = "matthew@example.com"}
+]
+maintainers = [
+    {name = "Matthew Lieb", email = "matthew@example.com"}
+]
+keywords = [
+    "spotify", 
+    "imessage", 
+    "playlist", 
+    "automation", 
+    "cli", 
+    "music", 
+    "export", 
+    "backup", 
+    "templates"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Utilities",
+    "Environment :: Console",
+    "Operating System :: MacOS",
+    "Operating System :: MacOS :: MacOS X",
+]
+dependencies = [
+    "click>=8,<9",
+    "spotipy>=2.23,<3"
+]
+
+[project.urls]
+Homepage = "https://github.com/matthewlieb/spotify-imessage"
+Documentation = "https://github.com/matthewlieb/spotify-imessage#readme"
+Repository = "https://github.com/matthewlieb/spotify-imessage"
+Issues = "https://github.com/matthewlieb/spotify-imessage/issues"
+Changelog = "https://github.com/matthewlieb/spotify-imessage/releases"
 
 [project.scripts]
 spotify-imessage = "spotify_imessage.cli:cli"
@@ -21,3 +63,9 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+spotify_imessage = ["*.json", "*.txt"]
+
+[tool.setuptools.dynamic]
+version = {attr = "spotify_imessage.__version__"}
