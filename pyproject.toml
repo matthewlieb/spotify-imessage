@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spotify-imessage"
+version = "0.1.0"
+description = "Sync Spotify tracks shared in an iMessage group chat into a Spotify playlist."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {file = "LICENSE"}
+authors = [{name = "Arch1Medes", email = "learnwitharch1medes@gmail.com"}]
+keywords = ["spotify", "imessage", "playlist", "automation", "cli"]
+dependencies = [
+  "click>=8,<9",
+  "spotipy>=2.23,<3"
+]
+
+[project.urls]
+Homepage = "https://github.com/matthewlieb/spotify-imessage"
+Issues = "https://github.com/matthewlieb/spotify-imessage/issues"
+
+[project.scripts]
+spotify-imessage = "spotify_imessage.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+packages = ["spotify_imessage"]
+include-package-data = true
