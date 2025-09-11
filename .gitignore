@@ -40,6 +40,16 @@ ENV/
 *.env
 .env*
 
+# Log files (may contain sensitive data)
+*.log
+logs/
+web-react/*.log
+
+# Session/cookie files
+cookies.txt
+*.cookies
+session.json
+
 # Local data/output from runs
 track_ids.txt
 _dump/
