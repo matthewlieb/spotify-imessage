@@ -21,6 +21,13 @@ import threading
 import logging
 import traceback
 
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    print("Warning: python-dotenv not installed. Environment variables must be set manually.")
+
 # Configure comprehensive logging
 logging.basicConfig(
     level=logging.DEBUG,
@@ -42,8 +49,23 @@ except ImportError:
     SPOTIFY_AVAILABLE = False
     print("Warning: spotipy not available. Playlist name lookup disabled.")
 
+# Session management for OAuth
+from flask import session, redirect, url_for
+import secrets
+
 app = Flask(__name__)
-CORS(app)
+CORS(app, supports_credentials=True, origins=['http://localhost:3000', 'http://127.0.0.1:3000'])
+
+# Configure session for OAuth
+app.secret_key = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(32))
+
+# Configure session settings for better reliability
+app.config['SESSION_COOKIE_SECURE'] = False  # Set to True in production with HTTPS
+app.config['SESSION_COOKIE_HTTPONLY'] = False  # Allow JavaScript access for debugging
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_DOMAIN'] = None  # Allow cookies for both localhost and 127.0.0.1
+app.config['SESSION_COOKIE_PATH'] = '/'  # Ensure cookie is available for all paths
+app.config['PERMANENT_SESSION_LIFETIME'] = 3600  # 1 hour
 
 logger.info("Flask app created successfully")
 logger.info("CORS enabled")  # Enable CORS for development
@@ -63,31 +85,54 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 processing_status = {}
 status_queue = queue.Queue()
 
+# Store OAuth states temporarily (in production, use Redis or database)
+oauth_states = {}
+
+# Store temporary auth tokens (in production, use Redis or database)
+temp_auth_tokens = {}
+
 # Spotify configuration
-SPOTIFY_CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID', 'ee9c48a1cfe44fe392fd3ff39d95b3a5')
-SPOTIFY_CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET', '47750a0f67494b30a59e739bc8d9e535')
-SPOTIFY_REDIRECT_URI = os.getenv('SPOTIFY_REDIRECT_URI', 'http://127.0.0.1:8000/callback')
+SPOTIFY_CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID')
+SPOTIFY_CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET')
+SPOTIFY_REDIRECT_URI = os.getenv('SPOTIFY_REDIRECT_URI', 'http://127.0.0.1:8004/callback')
+
+# Validate required environment variables
+if not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_SECRET:
+    raise ValueError("SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET must be set in environment variables")
+
+# OAuth scope for Spotify
+SPOTIFY_SCOPE = "playlist-modify-public playlist-modify-private playlist-read-private user-read-private"
 
 def get_spotify_client():
-    """Get authenticated Spotify client."""
+    """Get authenticated Spotify client from session."""
     if not SPOTIFY_AVAILABLE:
         return None
     
     try:
-        cache_path = os.path.expanduser("~/.cache/spotify_token.json")
-        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        # Check if user is authenticated via session
+        if 'spotify_token' not in session:
+            return None
         
-        sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
-            client_id=SPOTIFY_CLIENT_ID,
-            client_secret=SPOTIFY_CLIENT_SECRET,
-            redirect_uri=SPOTIFY_REDIRECT_URI,
-            scope="playlist-modify-public playlist-modify-private playlist-read-private",
-            cache_path=cache_path
-        ))
+        # Create Spotify client with session token
+        sp = spotipy.Spotify(auth=session['spotify_token']['access_token'])
         return sp
     except Exception as e:
         print(f"Error initializing Spotify client: {e}")
+        # Clear invalid token from session
+        session.pop('spotify_token', None)
         return None
+
+def get_spotify_oauth():
+    """Get Spotify OAuth manager."""
+    if not SPOTIFY_AVAILABLE:
+        return None
+    
+    return SpotifyOAuth(
+        client_id=SPOTIFY_CLIENT_ID,
+        client_secret=SPOTIFY_CLIENT_SECRET,
+        redirect_uri=SPOTIFY_REDIRECT_URI,
+        scope=SPOTIFY_SCOPE
+    )
 
 def search_playlist_by_name(playlist_name):
     """Search for a playlist by name and return its ID."""
@@ -577,6 +622,253 @@ def health_check():
     except Exception as e:
         logger.error(f"Health check error: {e}")
         logger.error(traceback.format_exc())
+        return jsonify({'error': str(e)}), 500
+
+# OAuth endpoints
+@app.route('/api/auth/spotify')
+def spotify_login():
+    """Initiate Spotify OAuth login."""
+    try:
+        oauth = get_spotify_oauth()
+        if not oauth:
+            return jsonify({'error': 'Spotify OAuth not available'}), 500
+        
+        # Generate state parameter for security
+        state = secrets.token_urlsafe(32)
+        
+        # Store state in both session and global store for redundancy
+        session['oauth_state'] = state
+        session.permanent = True  # Make session permanent
+        oauth_states[state] = {
+            'timestamp': datetime.now(),
+            'used': False
+        }
+        
+        # Get authorization URL
+        auth_url = oauth.get_authorize_url(state=state)
+        
+        logger.info(f"Generated OAuth state: {state}")
+        logger.info(f"Authorization URL: {auth_url}")
+        logger.info(f"Session ID: {session.get('_id', 'No session ID')}")
+        
+        return jsonify({
+            'auth_url': auth_url,
+            'state': state
+        })
+    except Exception as e:
+        logger.error(f"Error initiating Spotify login: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/callback')
+def spotify_callback():
+    """Handle Spotify OAuth callback."""
+    try:
+        # Get state parameter from request
+        state = request.args.get('state')
+        stored_state = session.get('oauth_state')
+        global_state = oauth_states.get(state)
+        
+        logger.info(f"Callback received state: {state}")
+        logger.info(f"Stored state in session: {stored_state}")
+        logger.info(f"Global state exists: {global_state is not None}")
+        logger.info(f"Session ID: {session.get('_id', 'No session ID')}")
+        
+        # Verify state parameter
+        if not state:
+            logger.error("No state parameter in callback")
+            return jsonify({'error': 'No state parameter provided'}), 400
+        
+        # Check if state exists in global store (more reliable than session)
+        if not global_state:
+            logger.error(f"No global state found for: {state}")
+            return jsonify({'error': 'Invalid or expired state parameter'}), 400
+        
+        # Check if state was already used
+        if global_state.get('used', False):
+            logger.error(f"State already used: {state}")
+            return jsonify({'error': 'State parameter already used'}), 400
+        
+        # Verify state matches session (if session exists)
+        if stored_state and state != stored_state:
+            logger.error(f"State mismatch: received={state}, stored={stored_state}")
+            return jsonify({'error': 'Invalid state parameter'}), 400
+        
+        # Mark state as used in global store
+        oauth_states[state]['used'] = True
+        # Don't clear the oauth_state from session yet - do it after storing user data
+        
+        # Get authorization code
+        code = request.args.get('code')
+        if not code:
+            return jsonify({'error': 'Authorization code not provided'}), 400
+        
+        # Exchange code for token
+        oauth = get_spotify_oauth()
+        if not oauth:
+            return jsonify({'error': 'Spotify OAuth not available'}), 500
+        
+        token_info = oauth.get_access_token(code)
+        
+        # Store token in session
+        session['spotify_token'] = token_info
+        logger.info(f"Stored spotify_token in session: {bool(session.get('spotify_token'))}")
+        
+        # Get user info
+        sp = spotipy.Spotify(auth=token_info['access_token'])
+        user = sp.current_user()
+        
+        # Store user info in session
+        session['spotify_user'] = {
+            'id': user['id'],
+            'display_name': user['display_name'],
+            'email': user.get('email', ''),
+            'country': user.get('country', ''),
+            'product': user.get('product', '')
+        }
+        logger.info(f"Stored spotify_user in session: {bool(session.get('spotify_user'))}")
+        logger.info(f"Session keys after storing: {list(session.keys())}")
+        
+        # Generate a temporary auth token
+        auth_token = secrets.token_urlsafe(32)
+        
+        # Store auth data in temporary storage
+        temp_auth_tokens[auth_token] = {
+            'spotify_token': token_info,
+            'spotify_user': {
+                'id': user['id'],
+                'display_name': user['display_name'],
+                'email': user.get('email', ''),
+                'country': user.get('country', ''),
+                'product': user.get('product', '')
+            },
+            'timestamp': datetime.now()
+        }
+        
+        # Now clear the oauth_state from session
+        if 'oauth_state' in session:
+            del session['oauth_state']
+        
+        # Force session to be saved
+        session.permanent = True
+        session.modified = True
+        
+        # Redirect to frontend with success and auth token
+        logger.info("About to redirect to frontend with auth token")
+        return redirect(f'http://localhost:3000?spotify_auth=success&token={auth_token}')
+        
+    except Exception as e:
+        logger.error(f"Error in Spotify callback: {e}")
+        return redirect('http://localhost:3000?spotify_auth=error')
+
+@app.route('/api/auth/exchange-token', methods=['POST'])
+def exchange_auth_token():
+    """Exchange temporary auth token for session data."""
+    try:
+        data = request.get_json()
+        auth_token = data.get('token')
+        
+        if not auth_token:
+            return jsonify({'error': 'No token provided'}), 400
+        
+        # Check if token exists and is not expired (1 hour)
+        if auth_token not in temp_auth_tokens:
+            return jsonify({'error': 'Invalid or expired token'}), 400
+        
+        auth_data = temp_auth_tokens[auth_token]
+        
+        # Check if token is expired (1 hour)
+        if (datetime.now() - auth_data['timestamp']).seconds > 3600:
+            del temp_auth_tokens[auth_token]
+            return jsonify({'error': 'Token expired'}), 400
+        
+        # Store auth data in session
+        session['spotify_token'] = auth_data['spotify_token']
+        session['spotify_user'] = auth_data['spotify_user']
+        session.permanent = True
+        session.modified = True
+        
+        # Remove the temporary token
+        del temp_auth_tokens[auth_token]
+        
+        logger.info(f"Exchanged token for session data: {list(session.keys())}")
+        
+        return jsonify({
+            'success': True,
+            'message': 'Authentication successful',
+            'user': auth_data['spotify_user']
+        })
+        
+    except Exception as e:
+        logger.error(f"Error exchanging auth token: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/auth/status')
+def auth_status():
+    """Check authentication status."""
+    try:
+        logger.info(f"Auth status check - Session ID: {session.get('_id', 'No session ID')}")
+        logger.info(f"Auth status check - Session keys: {list(session.keys())}")
+        logger.info(f"Auth status check - Has spotify_token: {'spotify_token' in session}")
+        logger.info(f"Auth status check - Has spotify_user: {'spotify_user' in session}")
+        
+        if 'spotify_token' not in session:
+            logger.info("Auth status check - No spotify_token in session")
+            return jsonify({
+                'authenticated': False,
+                'user': None
+            })
+        
+        # Check if token is still valid
+        sp = get_spotify_client()
+        if not sp:
+            # Token is invalid, clear session
+            session.pop('spotify_token', None)
+            session.pop('spotify_user', None)
+            return jsonify({
+                'authenticated': False,
+                'user': None
+            })
+        
+        # Try to get user info to verify token
+        try:
+            user = sp.current_user()
+            return jsonify({
+                'authenticated': True,
+                'user': session.get('spotify_user', {
+                    'id': user['id'],
+                    'display_name': user['display_name'],
+                    'email': user.get('email', ''),
+                    'country': user.get('country', ''),
+                    'product': user.get('product', '')
+                })
+            })
+        except Exception:
+            # Token is invalid, clear session
+            session.pop('spotify_token', None)
+            session.pop('spotify_user', None)
+            return jsonify({
+                'authenticated': False,
+                'user': None
+            })
+            
+    except Exception as e:
+        logger.error(f"Error checking auth status: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/auth/logout', methods=['POST'])
+def spotify_logout():
+    """Logout from Spotify."""
+    try:
+        session.pop('spotify_token', None)
+        session.pop('spotify_user', None)
+        session.pop('oauth_state', None)
+        
+        return jsonify({
+            'success': True,
+            'message': 'Logged out successfully'
+        })
+    except Exception as e:
+        logger.error(f"Error during logout: {e}")
         return jsonify({'error': str(e)}), 500
 
 

@@ -1,6 +1,20 @@
 # 🎵 spotify-message Web App
 
-A web interface for extracting Spotify tracks from your message exports and creating playlists.
+A web interface for extracting Spotify tracks from your message exports and creating playlists. **Now with Spotify OAuth authentication** - no more manual API key setup!
+
+## 🔐 Spotify Authentication
+
+The app now supports **one-click Spotify sign-in**! Users can connect their Spotify accounts directly through OAuth, eliminating the need for manual API key configuration.
+
+### For Users
+- Simply click "Sign in with Spotify" when you first open the app
+- Grant permissions to create and manage playlists
+- Start creating playlists immediately!
+
+### For Developers
+- See [SPOTIFY_OAUTH_SETUP.md](../SPOTIFY_OAUTH_SETUP.md) for detailed setup instructions
+- Set up your own Spotify app in the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
+- Configure environment variables with your app credentials
 
 ## 🚀 Quick Start
 
@@ -8,6 +22,7 @@ A web interface for extracting Spotify tracks from your message exports and crea
 - Python 3.8+
 - Node.js 16+
 - Virtual environment set up in the project root
+- **Spotify Developer App** (see [SPOTIFY_OAUTH_SETUP.md](../SPOTIFY_OAUTH_SETUP.md) for setup)
 
 ### Starting the App
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 function App() {
   const [activeTab, setActiveTab] = useState('smart-detect');
@@ -18,6 +18,13 @@ function App() {
   
   const [showProcessingOptions, setShowProcessingOptions] = useState(false);
 
+  // OAuth authentication state
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [spotifyUser, setSpotifyUser] = useState(null);
+  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const hasHandledOAuthRef = useRef(false);
+
   // API base URL - automatically detected from environment or smart defaults
   const getApiBaseUrl = () => {
     // First try environment variable
@@ -26,7 +33,7 @@ function App() {
     }
     
     // Fallback to localhost with common ports
-    const ports = [8004, 8000, 5000, 3001];
+    const ports = [8004, 8005, 8000, 5000, 3001];
     
     // Try to detect if backend is running on any of these ports
     for (const port of ports) {
@@ -47,6 +54,208 @@ function App() {
 
   const API_BASE_URL = getApiBaseUrl();
 
+  // OAuth authentication functions
+  const checkAuthStatus = async () => {
+    try {
+      console.log('Checking auth status with API_BASE_URL:', API_BASE_URL);
+      const response = await fetch(`${API_BASE_URL}/api/auth/status`, {
+        credentials: 'include' // Include cookies for session
+      });
+      console.log('Auth status response:', response.status);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      console.log('Auth status data:', data);
+      
+      setIsAuthenticated(data.authenticated);
+      setSpotifyUser(data.user);
+    } catch (error) {
+      console.error('Error checking auth status:', error);
+      setIsAuthenticated(false);
+      setSpotifyUser(null);
+    } finally {
+      setIsCheckingAuth(false);
+    }
+  };
+
+  const handleSpotifyLogin = async () => {
+    console.log('🔥 handleSpotifyLogin function called!');
+    console.log('🔥 Current window location:', window.location.href);
+    console.log('🔥 API_BASE_URL:', API_BASE_URL);
+    
+    setIsLoggingIn(true);
+    try {
+      console.log('🔥 Making fetch request to:', `${API_BASE_URL}/api/auth/spotify`);
+      const response = await fetch(`${API_BASE_URL}/api/auth/spotify`, {
+        credentials: 'include',
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+      
+      console.log('🔥 Response received:');
+      console.log('🔥 - Status:', response.status);
+      console.log('🔥 - Status Text:', response.statusText);
+      console.log('🔥 - Headers:', Object.fromEntries(response.headers.entries()));
+      console.log('🔥 - URL:', response.url);
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('🔥 HTTP Error Response:', errorText);
+        throw new Error(`HTTP error! status: ${response.status}, text: ${errorText}`);
+      }
+      
+      const data = await response.json();
+      console.log('🔥 Response data:', data);
+      
+      if (data.auth_url) {
+        console.log('🔥 About to redirect to Spotify OAuth URL:', data.auth_url);
+        console.log('🔥 Current window location before redirect:', window.location.href);
+        
+        // Add a small delay to ensure logs are visible
+        setTimeout(() => {
+          console.log('🔥 Executing redirect now...');
+          window.location.href = data.auth_url;
+        }, 100);
+      } else {
+        console.error('🔥 No auth_url in response:', data);
+        alert('Failed to initiate Spotify login - no auth URL received');
+        setIsLoggingIn(false);
+      }
+    } catch (error) {
+      console.error('🔥 Error initiating Spotify login:', error);
+      console.error('🔥 Error stack:', error.stack);
+      alert(`Error connecting to server: ${error.message}`);
+      setIsLoggingIn(false);
+    }
+  };
+
+  const exchangeAuthToken = async (authToken) => {
+    try {
+      console.log('🔥 Exchanging auth token:', authToken);
+      const response = await fetch(`${API_BASE_URL}/api/auth/exchange-token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({ token: authToken })
+      });
+      
+      console.log('🔥 Token exchange response status:', response.status);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      console.log('🔥 Token exchange response data:', data);
+      
+      if (data.success) {
+        console.log('🔥 Token exchange successful!');
+        setIsAuthenticated(true);
+        setSpotifyUser(data.user);
+        
+        // Don't call checkAuthStatus immediately - we already have the user data
+        console.log('🔥 Setting authenticated state directly from token exchange');
+      } else {
+        console.error('🔥 Token exchange failed:', data.error);
+        alert('Authentication failed. Please try again.');
+      }
+    } catch (error) {
+      console.error('🔥 Error exchanging auth token:', error);
+      alert('Authentication failed. Please try again.');
+    }
+  };
+
+  const handleSpotifyLogout = async () => {
+    try {
+      await fetch(`${API_BASE_URL}/api/auth/logout`, {
+        method: 'POST',
+        credentials: 'include'
+      });
+      
+      setIsAuthenticated(false);
+      setSpotifyUser(null);
+    } catch (error) {
+      console.error('Error during logout:', error);
+    }
+  };
+
+  // Check authentication status on component mount
+  useEffect(() => {
+    console.log('🔥 useEffect called - checking auth status and URL params');
+    console.log('🔥 Current URL:', window.location.href);
+    console.log('🔥 Search params:', window.location.search);
+    console.log('🔥 Has handled OAuth:', hasHandledOAuthRef.current);
+    
+    // If we've already handled OAuth, don't run again
+    if (hasHandledOAuthRef.current) {
+      console.log('🔥 Already handled OAuth, skipping...');
+      return;
+    }
+    
+    // Check for OAuth callback parameters first
+    const urlParams = new URLSearchParams(window.location.search);
+    const authResult = urlParams.get('spotify_auth');
+    
+    console.log('🔥 URL params:', Object.fromEntries(urlParams.entries()));
+    console.log('🔥 Auth result from URL:', authResult);
+    
+    if (authResult === 'success') {
+      console.log('🔥 OAuth success detected! Checking for auth token...');
+      const authToken = urlParams.get('token');
+      
+      if (authToken) {
+        console.log('🔥 Found auth token, exchanging for session data...');
+        // Mark that we've handled OAuth (synchronously)
+        hasHandledOAuthRef.current = true;
+        // Exchange the temporary token for session data
+        exchangeAuthToken(authToken);
+        // Clean up URL immediately
+        window.history.replaceState({}, document.title, window.location.pathname);
+        // Reset loading state
+        setIsLoggingIn(false);
+        return; // Don't call checkAuthStatus
+      } else {
+        console.log('🔥 No auth token found, checking auth status...');
+        // Mark that we've handled OAuth (synchronously)
+        hasHandledOAuthRef.current = true;
+        // Fallback to checking auth status
+        setTimeout(() => {
+          console.log('🔥 Re-checking auth status after OAuth success');
+          checkAuthStatus();
+        }, 1000);
+        // Clean up URL
+        window.history.replaceState({}, document.title, window.location.pathname);
+        // Reset loading state
+        setIsLoggingIn(false);
+        return;
+      }
+    } else if (authResult === 'error') {
+      console.log('🔥 OAuth error detected!');
+      // Mark that we've handled OAuth (synchronously)
+      hasHandledOAuthRef.current = true;
+      alert('Spotify authentication failed. Please try again.');
+      // Clean up URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+      // Reset loading state
+      setIsLoggingIn(false);
+      return;
+    } else {
+      console.log('🔥 No OAuth callback parameters found');
+      // No OAuth callback, just check auth status
+      checkAuthStatus();
+    }
+    
+    // Reset loading state on mount
+    setIsLoggingIn(false);
+  }, []);
+
   const handleSmartScan = async () => {
     setIsScanning(true);
     setScanError('');
@@ -57,6 +266,7 @@ function App() {
         headers: {
           'Content-Type': 'application/json',
         },
+        credentials: 'include'
       });
       
       const data = await response.json();
@@ -93,6 +303,7 @@ function App() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ name: playlistName }),
+        credentials: 'include'
       });
 
       const data = await response.json();
@@ -130,6 +341,7 @@ function App() {
           name: playlistName,
           description: `Created by spotify-message from chat messages`
         }),
+        credentials: 'include'
       });
 
       const data = await response.json();
@@ -177,6 +389,7 @@ function App() {
             dry_run: dryRun
           }
         }),
+        credentials: 'include'
       });
 
       const data = await response.json();
@@ -201,7 +414,9 @@ function App() {
   const pollJobStatus = async (jobId) => {
     const pollInterval = setInterval(async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/api/status/${jobId}`);
+        const response = await fetch(`${API_BASE_URL}/api/status/${jobId}`, {
+          credentials: 'include'
+        });
         const jobStatus = await response.json();
         
         setCurrentJob(jobStatus);
@@ -260,8 +475,61 @@ function App() {
         </div>
 
         <div className="max-w-4xl mx-auto space-y-8">
-          {/* Tab Navigation */}
-          <div className="flex flex-wrap justify-center gap-2 mb-8">
+          {/* Authentication Status */}
+          {isCheckingAuth ? (
+            <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-6 shadow-2xl text-center">
+              <p className="text-gray-300">Checking authentication...</p>
+            </div>
+          ) : !isAuthenticated ? (
+            <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 shadow-2xl text-center">
+              <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                <span className="text-2xl">🎵</span>
+              </div>
+              <h2 className="text-2xl font-bold mb-4">Connect to Spotify</h2>
+              <p className="text-gray-300 mb-6">
+                Sign in with your Spotify account to create and manage playlists
+              </p>
+              <button
+                onClick={() => {
+                  console.log('🔥 Button clicked!');
+                  handleSpotifyLogin();
+                }}
+                disabled={isLoggingIn}
+                className="bg-green-500 hover:bg-green-600 disabled:bg-green-400 disabled:cursor-not-allowed text-white font-semibold px-8 py-3 rounded-full transition-colors flex items-center gap-2 mx-auto"
+              >
+                <span>🎵</span>
+                {isLoggingIn ? 'Redirecting to Spotify...' : 'Sign in with Spotify'}
+              </button>
+            </div>
+          ) : (
+            <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-6 shadow-2xl">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 bg-green-500/20 rounded-full flex items-center justify-center">
+                    <span className="text-xl">🎵</span>
+                  </div>
+                  <div>
+                    <h3 className="font-semibold">Connected to Spotify</h3>
+                    <p className="text-gray-300 text-sm">
+                      {spotifyUser?.display_name || 'User'} • {spotifyUser?.product || 'Free'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={handleSpotifyLogout}
+                  className="bg-red-500/20 hover:bg-red-500/30 text-red-300 hover:text-red-200 px-4 py-2 rounded-full transition-colors text-sm"
+                >
+                  Sign Out
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Main Content - Only show when authenticated */}
+          {isAuthenticated && (
+            <>
+              {/* Tab Navigation */}
+              <div className="flex flex-wrap justify-center gap-2 mb-8">
             <button
               onClick={() => handleTabChange('smart-detect')}
               className={`px-4 py-2 rounded-full transition-colors ${
@@ -589,6 +857,8 @@ function App() {
                 </div>
               </div>
             </div>
+          )}
+            </>
           )}
         </div>
       </div>
