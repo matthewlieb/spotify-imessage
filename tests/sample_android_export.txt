@@ -1,0 +1,42 @@
+# Sample Android Messages Export File
+# Format: Similar to iMessage export but with Android-specific formatting
+
+2024-01-15 14:30:22 - John Doe: Hey, check out this song! https://open.spotify.com/track/4iV5W9uYEdYUVa79Axb7Rh
+2024-01-15 14:32:15 - Jane Smith: Love that one! Here's another: https://open.spotify.com/track/6rqhFgbbKwnb9MLmUQDhG6
+2024-01-15 14:35:08 - John Doe: Perfect! And this: https://open.spotify.com/track/3HxSLZMDpX1X1jzEACwYv8
+2024-01-15 14:40:12 - Jane Smith: Great playlist material! https://open.spotify.com/track/7lEptt4wbM0yJTvSG5EBof
+
+2024-01-16 09:15:33 - John Doe: Morning vibes: https://open.spotify.com/track/1z6JQzrA6c9yZB4U2jJgX2
+2024-01-16 09:20:45 - Jane Smith: Good choice! https://open.spotify.com/track/5QO79kh1waicV47BqGRL3g
+
+2024-01-17 18:22:10 - John Doe: Weekend playlist: https://open.spotify.com/track/2LBqCSwhJGcFQeTHMVGwy3
+2024-01-17 18:25:18 - Jane Smith: Adding to my collection! https://open.spotify.com/track/8VtArhVspYN1UzLG6zgnmy
+
+# Edge cases for testing
+2024-01-18 12:00:00 - John Doe: Invalid URL: https://open.spotify.com/invalid
+2024-01-18 12:01:00 - Jane Smith: Another invalid: spotify.com/track/123
+2024-01-18 12:02:00 - John Doe: Valid again: https://open.spotify.com/track/4iV5W9uYEdYUVa79Axb7Rh
+
+# Multiple tracks in one message
+2024-01-19 15:30:00 - John Doe: Check these out:
+https://open.spotify.com/track/6rqhFgbbKwnb9MLmUQDhG6
+https://open.spotify.com/track/3HxSLZMDpX1X1jzEACwYv8
+https://open.spotify.com/track/7lEptt4wbM0yJTvSG5EBof
+
+# Messages without Spotify links
+2024-01-20 10:00:00 - Jane Smith: How's your day going?
+2024-01-20 10:05:00 - John Doe: Pretty good! Working on some music.
+
+# Different date formats (Android might use different formatting)
+Jan 21, 2024 16:45:22 - John Doe: Late afternoon vibes: https://open.spotify.com/track/4iV5W9uYEdYUVa79Axb7Rh
+21/01/2024 17:30:15 - Jane Smith: Perfect timing! https://open.spotify.com/track/6rqhFgbbKwnb9MLmUQDhG6
+
+# Emoji and special characters
+2024-01-22 20:15:33 - John Doe 🎵: Night music: https://open.spotify.com/track/3HxSLZMDpX1X1jzEACwYv8
+2024-01-22 20:20:45 - Jane Smith 💿: Love it! https://open.spotify.com/track/7lEptt4wbM0yJTvSG5EBof
+
+# Group chat with multiple participants
+2024-01-23 14:00:00 - Music Group - John Doe: Group playlist time!
+2024-01-23 14:01:00 - Music Group - Jane Smith: I'll start: https://open.spotify.com/track/4iV5W9uYEdYUVa79Axb7Rh
+2024-01-23 14:02:00 - Music Group - Bob Wilson: Nice! https://open.spotify.com/track/6rqhFgbbKwnb9MLmUQDhG6
+2024-01-23 14:03:00 - Music Group - Alice Brown: Adding this: https://open.spotify.com/track/3HxSLZMDpX1X1jzEACwYv8

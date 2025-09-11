@@ -29,6 +29,9 @@ import click
 from spotipy import Spotify
 from spotipy.oauth2 import SpotifyOAuth
 
+# Import Android module
+from . import android
+
 # Defaults
 DEFAULT_DB_PATH = os.path.expanduser("~/Library/Messages/chat.db")
 DEFAULT_ATTACH_DIR = os.path.expanduser("~/Library/Messages/Attachments")
@@ -612,6 +615,172 @@ def imessage(chat_name: str,
 
     # 6) Cleanup (unless --keep-export)
     _cleanup_export_directory(output_dir, keep_export)
+
+
+@cli.command()
+@click.option("--file", "export_file", required=True, help="Path to Android Messages export file")
+@click.option("--playlist", "playlist_id", help="Target Spotify playlist ID")
+@click.option("--cache", "cache_path", help="Where to store Spotify OAuth cache")
+@click.option("--client-id", help="Spotify Client ID")
+@click.option("--client-secret", help="Spotify Client Secret")
+@click.option("--redirect-uri", help="Spotify Redirect URI")
+@click.option("--dry-run", is_flag=True, help="Extract tracks but do not add to Spotify")
+@click.option("--no-dedupe", is_flag=True, help="Do not skip tracks already in the playlist")
+@click.option("--show-metadata", is_flag=True, help="Show artist and title when adding tracks")
+@click.option("--start-date", help="Only process messages from this date (YYYY-MM-DD)")
+@click.option("--end-date", help="Only process messages until this date (YYYY-MM-DD)")
+@click.option("--days-back", type=int, help="Only process messages from the last N days")
+@click.option("--stats", is_flag=True, help="Show detailed statistics about the export file")
+def android_cmd(export_file: str,
+                playlist_id: str,
+                cache_path: str,
+                client_id: str,
+                client_secret: str,
+                redirect_uri: str,
+                dry_run: bool,
+                no_dedupe: bool,
+                show_metadata: bool,
+                start_date: str,
+                end_date: str,
+                days_back: int,
+                stats: bool):
+    """Extract Spotify tracks from Android Messages export file and add them to a playlist."""
+    # Get values from config if not provided
+    playlist_id = playlist_id or _get_config_value('playlist_id')
+    cache_path = cache_path or _get_config_value('cache_path', DEFAULT_CACHE_PATH)
+    client_id = client_id or _get_config_value('client_id')
+    client_secret = client_secret or _get_config_value('client_secret')
+    redirect_uri = redirect_uri or _get_config_value('redirect_uri', "http://127.0.0.1:8000/callback")
+    
+    # Validate required parameters
+    if not playlist_id:
+        raise click.ClickException("Playlist ID is required. Set it with --playlist or use 'spotify-message config --set playlist_id=YOUR_PLAYLIST_ID'")
+    
+    # Expand paths
+    export_file = os.path.expanduser(export_file)
+    cache_path = os.path.expanduser(cache_path)
+
+    # Parse date filters
+    start_datetime = None
+    end_datetime = None
+    
+    if days_back:
+        from datetime import timedelta
+        end_datetime = datetime.now()
+        start_datetime = end_datetime - timedelta(days=days_back)
+        click.echo(f"📅 Filtering messages from last {days_back} days ({start_datetime.strftime('%Y-%m-%d')} to {end_datetime.strftime('%Y-%m-%d')})")
+    elif start_date or end_date:
+        if start_date:
+            try:
+                start_datetime = datetime.strptime(start_date, '%Y-%m-%d')
+                click.echo(f"📅 Filtering messages from {start_date}")
+            except ValueError:
+                raise click.ClickException(f"Invalid start date format: {start_date}. Use YYYY-MM-DD")
+        
+        if end_date:
+            try:
+                end_datetime = datetime.strptime(end_date, '%Y-%m-%d')
+                # Set to end of day
+                end_datetime = end_datetime.replace(hour=23, minute=59, second=59)
+                click.echo(f"📅 Filtering messages until {end_date}")
+            except ValueError:
+                raise click.ClickException(f"Invalid end date format: {end_date}. Use YYYY-MM-DD")
+
+    # Validate inputs
+    _validate_spotify_credentials(client_id, client_secret)
+    _validate_playlist_id(playlist_id)
+    
+    # Validate Android export file
+    is_valid, error_msg = android.validate_android_export_file(export_file)
+    if not is_valid:
+        raise click.ClickException(f"Invalid Android export file: {error_msg}")
+
+    # Show statistics if requested
+    if stats:
+        click.echo("📊 Analyzing Android export file...")
+        stats_data = android.get_android_export_stats(export_file)
+        
+        if stats_data['errors']:
+            click.echo(f"⚠️  Errors: {', '.join(stats_data['errors'])}")
+        
+        click.echo(f"📄 Total lines: {stats_data['total_lines']}")
+        click.echo(f"📱 Android lines: {stats_data['android_lines']}")
+        click.echo(f"🎵 Spotify tracks found: {stats_data['spotify_tracks']}")
+        click.echo(f"🎯 Unique tracks: {stats_data['unique_tracks']}")
+        click.echo(f"👥 Senders: {len(stats_data['senders'])}")
+        
+        if stats_data['date_range']:
+            date_range = stats_data['date_range']
+            click.echo(f"📅 Date range: {date_range['start'].strftime('%Y-%m-%d')} to {date_range['end'].strftime('%Y-%m-%d')} ({date_range['days']} days)")
+        
+        if not dry_run:
+            click.echo("\n💡 Use --dry-run to see what tracks would be added without actually adding them")
+            return
+
+    # 1) Extract track IDs from Android export
+    click.echo(f"📱 Extracting Spotify tracks from Android export: {export_file}")
+    try:
+        track_ids = android.extract_track_ids_from_android_export(export_file, start_datetime, end_datetime)
+        click.echo(f"🎯 Found {len(track_ids)} unique Spotify tracks")
+        
+        if not track_ids:
+            click.echo("ℹ️  No Spotify tracks found in the export file")
+            return
+            
+    except Exception as e:
+        raise click.ClickException(f"Error extracting tracks from Android export: {e}")
+
+    # 2) Get Spotify client
+    sp = _get_spotify_client(client_id, client_secret, redirect_uri, cache_path)
+
+    # 3) Check for existing tracks (unless --no-dedupe)
+    if not no_dedupe:
+        click.echo("🔍 Checking for existing tracks in playlist...")
+        existing_tracks = _existing_track_ids(sp, playlist_id)
+        new_tracks = track_ids - existing_tracks
+        click.echo(f"✅ Found {len(new_tracks)} new tracks to add (skipped {len(existing_tracks)} existing)")
+        
+        if not new_tracks:
+            click.echo("ℹ️  All tracks are already in the playlist")
+            return
+            
+        track_ids = new_tracks
+
+    # 4) Show track metadata if requested
+    if show_metadata and not dry_run:
+        click.echo("🎵 Track details:")
+        for track_id in track_ids:
+            metadata = _get_track_metadata(sp, track_id)
+            if metadata:
+                click.echo(f"  • {metadata['artist']} - {metadata['title']}")
+
+    # 5) Add tracks to playlist (unless --dry-run)
+    if dry_run:
+        click.echo(f"🔍 DRY RUN: Would add {len(track_ids)} tracks to playlist {playlist_id}")
+        if show_metadata:
+            click.echo("🎵 Track details:")
+            for track_id in track_ids:
+                metadata = _get_track_metadata(sp, track_id)
+                if metadata:
+                    click.echo(f"  • {metadata['artist']} - {metadata['title']}")
+        return
+
+    click.echo(f"📤 Adding {len(track_ids)} tracks to playlist {playlist_id}...")
+    
+    # Convert to URIs and add in batches
+    uris = [f"spotify:track:{tid}" for tid in track_ids]
+    
+    with click.progressbar(length=len(uris), label="Adding tracks") as bar:
+        for i in range(0, len(uris), 100):
+            batch = uris[i:i+100]
+            try:
+                sp.playlist_add_items(playlist_id, batch)
+                bar.update(len(batch))
+            except Exception as e:
+                click.echo(f"⚠️  Error adding batch {i//100 + 1}: {e}")
+                # Continue with next batch
+
+    click.echo(f"✅ Done! Added {len(uris)} tracks to playlist {playlist_id}.")
 
 
 @cli.command()

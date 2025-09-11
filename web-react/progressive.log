@@ -1,0 +1,20 @@
+INFO:__main__:Progressive Flask app created successfully
+INFO:__main__:✅ Basic imports working
+INFO:__main__:✅ datetime and pathlib working
+INFO:__main__:✅ threading working
+INFO:__main__:✅ queue working
+INFO:__main__:✅ file operations working
+INFO:__main__:✅ subprocess working
+INFO:__main__:✅ sqlite3 working
+INFO:__main__:✅ spotipy working
+INFO:__main__:Starting progressive Flask server on port 8007
+ * Serving Flask app 'progressive_server'
+ * Debug mode: off
+INFO:werkzeug:[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8007
+ * Running on http://10.0.0.178:8007
+INFO:werkzeug:[33mPress CTRL+C to quit[0m
+INFO:__main__:Health check endpoint called
+INFO:__main__:Health check response: {'status': 'healthy', 'timestamp': '2025-09-01T13:34:56.657750'}
+INFO:werkzeug:127.0.0.1 - - [01/Sep/2025 13:34:56] "GET /api/health HTTP/1.1" 200 -

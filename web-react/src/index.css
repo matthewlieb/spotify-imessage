@@ -1,0 +1,49 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+  
+  body {
+    @apply bg-gradient-to-br from-dark-950 via-dark-900 to-dark-800 text-white;
+    min-height: 100vh;
+  }
+}
+
+@layer components {
+  .glass-card {
+    @apply bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl shadow-2xl;
+  }
+  
+  .spotify-gradient {
+    @apply bg-gradient-to-r from-spotify-500 to-spotify-600;
+  }
+  
+  .spotify-gradient-text {
+    @apply bg-gradient-to-r from-spotify-400 to-spotify-500 bg-clip-text text-transparent;
+  }
+  
+  .btn-primary {
+    @apply spotify-gradient text-white font-semibold px-6 py-3 rounded-full transition-all duration-300 hover:shadow-lg hover:shadow-spotify-500/25 hover:scale-105 active:scale-95;
+  }
+  
+  .btn-secondary {
+    @apply bg-white/10 text-white font-medium px-4 py-2 rounded-lg transition-all duration-300 hover:bg-white/20 hover:scale-105 active:scale-95;
+  }
+  
+  .input-field {
+    @apply bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-white placeholder-white/60 focus:outline-none focus:ring-2 focus:ring-spotify-500 focus:border-transparent transition-all duration-300;
+  }
+  
+  .progress-bar {
+    @apply w-full h-2 bg-white/20 rounded-full overflow-hidden;
+  }
+  
+  .progress-fill {
+    @apply h-full spotify-gradient transition-all duration-300 ease-out;
+  }
+}

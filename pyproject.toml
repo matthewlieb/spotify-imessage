@@ -3,7 +3,7 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "spotify-imessage"
+name = "spotify_message"
 version = "0.1.0"
 description = "Extract Spotify tracks from iMessage conversations and manage them in Spotify playlists"
 readme = "README.md"
@@ -49,14 +49,14 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/matthewlieb/spotify-imessage"
-Documentation = "https://github.com/matthewlieb/spotify-imessage#readme"
-Repository = "https://github.com/matthewlieb/spotify-imessage"
-Issues = "https://github.com/matthewlieb/spotify-imessage/issues"
-Changelog = "https://github.com/matthewlieb/spotify-imessage/releases"
+Homepage = "https://github.com/matthewlieb/spotify_message"
+Documentation = "https://github.com/matthewlieb/spotify_message#readme"
+Repository = "https://github.com/matthewlieb/spotify_message/issues"
+Issues = "https://github.com/matthewlieb/spotify_message/issues"
+Changelog = "https://github.com/matthewlieb/spotify_message/releases"
 
 [project.scripts]
-spotify-imessage = "spotify_imessage.cli:cli"
+spotify_message = "spotify_imessage.cli:cli"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
