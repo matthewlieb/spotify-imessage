@@ -1,25 +1,26 @@
 # ♫ spotify-message
 
-**Extract Spotify tracks from your iMessage conversations and create amazing playlists automatically!**
+**Extract Spotify tracks from your message conversations and create amazing playlists automatically!**
 
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/Status-Production%20Ready-brightgreen.svg)](https://github.com/yourusername/spotify-message)
+[![Status](https://img.shields.io/badge/Status-Production%20Ready-brightgreen.svg)](https://github.com/matthewlieb/spotify-imessage)
 
 ## 🎯 **What It Does**
 
-Transform your iMessage conversations into Spotify playlists! This tool automatically:
+Transform your message conversations into Spotify playlists! This tool automatically:
 
-- 🔍 **Scans your iMessage database** for Spotify links
+- 🔍 **Scans your messages** for Spotify links (iMessage, Android Messages, or file uploads)
 - 🎵 **Extracts track information** (artist, title, album)
 - 📱 **Creates playlists** on your Spotify account
 - 🚀 **Batch processes** multiple conversations
 - 🌐 **Web interface** for easy management
 - 📊 **Smart detection** of music-heavy chats
+- 🔐 **OAuth authentication** - no manual API setup required!
 
 ## ✨ **Key Features**
 
-### **🎵 Smart Message Detection**
+### **🎵 Smart Message Detection (macOS/iOS)**
 - Automatically scans all iMessage conversations
 - Finds chats with Spotify links
 - Shows track counts per conversation
@@ -32,16 +33,22 @@ Transform your iMessage conversations into Spotify playlists! This tool automati
 - Date filtering for specific time periods
 
 ### **📁 File Upload Support**
-- Upload exported message files
-- Support for TXT and CSV formats
-- Android message export compatibility
+- Upload exported message files (TXT format)
+- Support for Android Messages exports
 - Drag-and-drop interface
+- Cross-platform compatibility
 
 ### **🎼 Advanced Playlist Management**
 - Search existing playlists by name
 - Create new playlists automatically
 - Add tracks with metadata
 - Dry-run mode for testing
+
+### **🔐 Spotify OAuth Authentication**
+- One-click Spotify sign-in
+- No manual API key setup
+- Secure token management
+- Automatic playlist access
 
 ### **⚡ Performance & Reliability**
 - Progress bars for large exports
@@ -51,128 +58,177 @@ Transform your iMessage conversations into Spotify playlists! This tool automati
 
 ## 🚀 **Quick Start**
 
-### **Option 1: Web Interface (Recommended)**
+### **Prerequisites**
+- Python 3.8+
+- Node.js 16+
+- Spotify account
+- **Spotify Developer App** (see [docs/SPOTIFY_OAUTH_SETUP.md](docs/SPOTIFY_OAUTH_SETUP.md))
+
+### **Starting the App**
+
+**macOS/Linux:**
 ```bash
 cd web-react
-./smart-start.sh
+./start.sh
 ```
-Then open http://localhost:3000 in your browser!
 
-### **Option 2: Command Line**
-```bash
-# Install the package
-pip install spotify-message
-
-# Authenticate with Spotify
-spotify-message auth
-
-# Scan and process messages
-spotify-message scan
+**Windows:**
+```cmd
+cd web-react
+start.bat
 ```
+
+That's it! The script will:
+- ✅ Check all prerequisites
+- ✅ Clean up any existing processes
+- ✅ Start the Flask backend (port 8004)
+- ✅ Start the React frontend (port 3000)
+- ✅ Monitor both services
+- ✅ Provide clear status updates
+
+### **Access Points**
+- **Web App**: http://localhost:3000
+- **API**: http://localhost:8004/api/
+
+## 🌍 **Cross-Platform Support**
+
+### **macOS/iOS Users:**
+- ✅ Full iMessage Smart Detection
+- ✅ Android Messages support
+- ✅ File upload support
+
+### **Windows/Android Users:**
+- ✅ Android Messages export processing
+- ✅ File upload support
+- ✅ All playlist management features
+- ❌ iMessage Smart Detection (not available on Windows)
+
+### **Linux Users:**
+- ✅ Android Messages support
+- ✅ File upload support
+- ❌ iMessage Smart Detection (not available on Linux)
 
 ## 🛠️ **Installation**
-
-### **Prerequisites**
-- macOS with iMessage
-- Python 3.8+
-- Spotify account
-- Homebrew (for imessage-exporter)
 
 ### **Setup**
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/spotify-message.git
+git clone https://github.com/matthewlieb/spotify-imessage.git
 cd spotify-imessage
+
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # Install dependencies
 pip install -e .
 
-# Install imessage-exporter
-brew install imessage-exporter
+# Install Node.js dependencies
+cd web-react
+npm install
 
-# Set up Spotify credentials
-spotify-message auth
+# Set up Spotify OAuth (see docs/SPOTIFY_OAUTH_SETUP.md)
+cp env.example .env
+# Edit .env with your Spotify app credentials
 ```
+
+### **Spotify OAuth Setup**
+1. Create a Spotify app at [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
+2. Set redirect URI to `http://127.0.0.1:8004/callback`
+3. Copy your Client ID and Client Secret to `.env`
+4. See [docs/SPOTIFY_OAUTH_SETUP.md](docs/SPOTIFY_OAUTH_SETUP.md) for detailed instructions
 
 ## 📱 **Usage Examples**
 
-### **Smart Detection (Web)**
-1. Open the web interface
-2. Click "Scan Messages"
-3. Browse your conversations with Spotify links
-4. Select a conversation and create a playlist
+### **Web Interface**
+1. **Start the app**: `./start.sh` (macOS/Linux) or `start.bat` (Windows)
+2. **Open browser**: http://localhost:3000
+3. **Sign in with Spotify**: One-click authentication
+4. **Choose method**:
+   - **Smart Detection** (macOS only): Auto-scan for Spotify links
+   - **Chat Name**: Enter specific chat name
+   - **File Upload**: Upload message export file
+5. **Configure playlist**: Search or create Spotify playlist
+6. **Process tracks**: Add tracks to your playlist
 
-### **Command Line**
-```bash
-# Process a specific chat
-spotify-message process "My daughter is dating Kodak Black"
+### **Getting Your Messages Data**
 
-# Batch process multiple chats
-spotify-message batch --chats "Familia,Tucrew,Work Chat"
+**Android Users (All Platforms):**
+1. Export Android Messages:
+   - Open Google Messages app
+   - Go to Settings → Advanced → Export messages
+   - Choose date range and export format (TXT)
+   - Download the export file
+2. Use the File Upload feature to process the export
 
-# Export to different formats
-spotify-message export --format csv --output my_playlist.csv
-
-# Date filtering
-spotify-message process "Family Chat" --since "2024-01-01"
-```
+**iPhone Users (macOS only):**
+- Use the Smart Detection feature for automatic scanning
+- Or export iMessage data and use File Upload
 
 ## 🔧 **Configuration**
 
 ### **Environment Variables**
 ```bash
-# Spotify credentials
-SPOTIFY_CLIENT_ID=your_client_id
-SPOTIFY_CLIENT_SECRET=your_client_secret
-SPOTIFY_REDIRECT_URI=http://localhost:8080
+# Spotify OAuth Configuration
+SPOTIFY_CLIENT_ID=your_client_id_here
+SPOTIFY_CLIENT_SECRET=your_client_secret_here
+SPOTIFY_REDIRECT_URI=http://127.0.0.1:8004/callback
 
-# App settings
-SPOTIFY_MESSAGE_CONFIG_DIR=~/.config/spotify-message
+# Flask Session Secret (optional - will auto-generate if not provided)
+FLASK_SECRET_KEY=your_secret_key_here
+
+# API Base URL (optional - defaults to http://localhost:8004)
+REACT_APP_API_URL=http://localhost:8004
 ```
 
-### **Configuration File**
-```json
-{
-  "spotify": {
-    "client_id": "your_client_id",
-    "client_secret": "your_client_secret",
-    "redirect_uri": "http://localhost:8080"
-  },
-  "imessage": {
-    "db_path": "~/Library/Messages/chat.db",
-    "export_format": "txt"
-  },
-  "playlist": {
-    "default_description": "Created by spotify-message",
-    "public": false
-  }
-}
-```
+## 🧪 **Testing**
 
-## 🌟 **Advanced Features**
-
-### **Playlist Templates**
 ```bash
-# Create a template
-spotify-message template create "Work Vibes" --description "Professional music for work"
+# Run the test suite
+pytest
 
-# Use a template
-spotify-message process "Work Chat" --template "Work Vibes"
+# With coverage
+pytest --cov=spotify_imessage
+
+# Specific test categories
+pytest tests/test_cli.py
+pytest tests/test_android_integration.py
 ```
 
-### **Backup & Restore**
-```bash
-# Backup your playlists
-spotify-message backup --output backup_$(date +%Y%m%d).json
+## 🐛 **Troubleshooting**
 
-# Restore from backup
-spotify-message restore --input backup_20241201.json
+### **Common Issues**
+
+**"Port already in use"**
+- The script automatically finds available ports
+- If issues persist, run: `pkill -f "python.*server" && pkill -f "react-scripts"`
+
+**"Virtual environment not found"**
+- Run from project root: `python3 -m venv venv`
+- Then: `source venv/bin/activate && pip install -e .`
+
+**"React takes too long to start"**
+- This is normal for the first startup (30-60 seconds)
+- Subsequent starts are faster
+- The script will wait and show progress
+
+**"Backend not responding"**
+- Check if virtual environment is activated
+- Ensure all dependencies are installed: `pip install flask flask-cors spotipy`
+
+### **Manual Start (if needed)**
+
+**Backend only:**
+```bash
+cd web-react
+source ../venv/bin/activate
+python3 server.py
 ```
 
-### **Android Support**
+**Frontend only:**
 ```bash
-# Process Android message exports
-spotify-message process --android --file android_export.txt
+cd web-react
+npm start
 ```
 
 ## 💰 **Monetization Potential**
@@ -201,8 +257,8 @@ This tool has strong monetization potential in several areas:
 ## 🏗️ **Architecture**
 
 ### **Components**
-- **CLI Tool**: Python-based command-line interface
 - **Web Interface**: React frontend with Flask backend
+- **CLI Tool**: Python-based command-line interface
 - **iMessage Integration**: Uses imessage-exporter for data access
 - **Spotify API**: OAuth2 authentication and playlist management
 - **Background Processing**: Queue-based job processing
@@ -213,20 +269,6 @@ This tool has strong monetization potential in several areas:
 - **CLI**: Click, Rich, Spotipy
 - **Data Processing**: Pandas, SQLite3
 - **Deployment**: Docker, GitHub Actions
-
-## 🧪 **Testing**
-
-```bash
-# Run the test suite
-pytest
-
-# With coverage
-pytest --cov=spotify_imessage
-
-# Specific test categories
-pytest tests/test_cli.py
-pytest tests/test_android_integration.py
-```
 
 ## 📊 **Performance**
 
@@ -246,7 +288,9 @@ pytest tests/test_android_integration.py
 
 ### **Local Development**
 ```bash
-./smart-start.sh
+cd web-react
+./start.sh  # macOS/Linux
+start.bat   # Windows
 ```
 
 ### **Production**
@@ -266,12 +310,12 @@ docker run -p 8004:8004 spotify-message
 
 ## 🤝 **Contributing**
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+We welcome contributions! Please see our [Contributing Guide](docs/CONTRIBUTING.md) for details.
 
 ### **Development Setup**
 ```bash
 # Clone and setup
-git clone https://github.com/yourusername/spotify-message.git
+git clone https://github.com/matthewlieb/spotify-imessage.git
 cd spotify-imessage
 pip install -e ".[dev]"
 
@@ -279,7 +323,8 @@ pip install -e ".[dev]"
 pytest
 
 # Start development servers
-./web-react/smart-start.sh
+cd web-react
+./start.sh
 ```
 
 ## 📈 **Roadmap**
@@ -295,12 +340,13 @@ pytest
 - [x] Batch processing
 - [x] Advanced filtering
 - [x] Export formats
+- [x] OAuth authentication
 
 ### **Phase 3: Platform Expansion** 🚧
 - [ ] Mobile app (iOS/Android)
-- [ ] Windows/Linux support
 - [ ] WhatsApp/Telegram integration
 - [ ] Social media sharing
+- [ ] Advanced analytics
 
 ### **Phase 4: Monetization** 📋
 - [ ] Premium features
@@ -314,14 +360,13 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## ⚠️ **Legal Disclaimer**
 
-This tool accesses your iMessage database and Spotify account. Please ensure you have the right to access this data and comply with all applicable terms of service.
+This tool accesses your message data and Spotify account. Please ensure you have the right to access this data and comply with all applicable terms of service.
 
 ## 🆘 **Support**
 
 - **Documentation**: [Full Documentation](docs/)
-- **Issues**: [GitHub Issues](https://github.com/yourusername/spotify-message/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/spotify-message/discussions)
-- **Email**: support@spotify-message.com
+- **Issues**: [GitHub Issues](https://github.com/matthewlieb/spotify-imessage/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/matthewlieb/spotify-imessage/discussions)
 
 ## 🙏 **Acknowledgments**
 
@@ -335,4 +380,3 @@ This tool accesses your iMessage database and Spotify account. Please ensure you
 **Made with ❤️ for music lovers everywhere**
 
 *Transform your conversations into playlists, one message at a time.*
-

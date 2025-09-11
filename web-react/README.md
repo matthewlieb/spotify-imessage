@@ -12,7 +12,7 @@ The app now supports **one-click Spotify sign-in**! Users can connect their Spot
 - Start creating playlists immediately!
 
 ### For Developers
-- See [SPOTIFY_OAUTH_SETUP.md](../SPOTIFY_OAUTH_SETUP.md) for detailed setup instructions
+- See [SPOTIFY_OAUTH_SETUP.md](../docs/SPOTIFY_OAUTH_SETUP.md) for detailed setup instructions
 - Set up your own Spotify app in the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
 - Configure environment variables with your app credentials
 
@@ -22,7 +22,7 @@ The app now supports **one-click Spotify sign-in**! Users can connect their Spot
 - Python 3.8+
 - Node.js 16+
 - Virtual environment set up in the project root
-- **Spotify Developer App** (see [SPOTIFY_OAUTH_SETUP.md](../SPOTIFY_OAUTH_SETUP.md) for setup)
+- **Spotify Developer App** (see [SPOTIFY_OAUTH_SETUP.md](../docs/SPOTIFY_OAUTH_SETUP.md) for setup)
 
 ### Starting the App
 
@@ -155,13 +155,16 @@ npm start
 
 ```
 web-react/
-├── start.sh              # Main startup script
+├── start.sh              # Main startup script (macOS/Linux)
+├── start.bat             # Main startup script (Windows)
 ├── server.py             # Flask backend
 ├── package.json          # React dependencies
 ├── src/
 │   ├── App.js           # Main React component
 │   ├── index.tsx        # React entry point
 │   └── services/        # API service layer
+├── .env                  # Environment variables (create from env.example)
+├── env.example           # Environment variables template
 └── README.md            # This file
 ```
 
@@ -171,12 +174,13 @@ web-react/
    - macOS/Linux: `./start.sh`
    - Windows: `start.bat`
 2. **Open browser**: http://localhost:3000
-3. **Choose method**:
+3. **Sign in with Spotify**: One-click authentication
+4. **Choose method**:
    - **Smart Detection** (macOS only): Auto-scan for Spotify links
    - **Chat Name**: Enter specific chat name
    - **File Upload**: Upload message export file
-4. **Configure playlist**: Search or create Spotify playlist
-5. **Process tracks**: Add tracks to your playlist
+5. **Configure playlist**: Search or create Spotify playlist
+6. **Process tracks**: Add tracks to your playlist
 
 ## 📱 Getting Your Messages Data
 
