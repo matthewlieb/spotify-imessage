@@ -121,6 +121,11 @@ function App() {
       if (data.success) {
         setIsAuthenticated(true);
         setSpotifyUser(data.user);
+        
+        // Store the token in localStorage for Spotify Web Playback SDK
+        if (data.spotify_token && data.spotify_token.access_token) {
+          localStorage.setItem('spotify_token', JSON.stringify(data.spotify_token));
+        }
       } else {
         alert('Authentication failed. Please try again.');
       }
@@ -139,6 +144,9 @@ function App() {
       
       setIsAuthenticated(false);
       setSpotifyUser(null);
+      
+      // Clear Spotify token from localStorage
+      localStorage.removeItem('spotify_token');
     } catch (error) {
       console.error('Error during logout:', error);
     }
@@ -421,24 +429,29 @@ function App() {
     filtered.sort((a, b) => {
       let aValue, bValue;
       
-      switch (sortBy) {
-        case 'name':
-          aValue = a.name.toLowerCase();
-          bValue = b.name.toLowerCase();
-          break;
-        case 'artist':
-          aValue = a.artist.toLowerCase();
-          bValue = b.artist.toLowerCase();
-          break;
-        case 'date':
-          // For now, we'll use a simple sort since we don't have actual dates
-          aValue = a.name.toLowerCase();
-          bValue = b.name.toLowerCase();
-          break;
-        default:
-          aValue = a.name.toLowerCase();
-          bValue = b.name.toLowerCase();
-      }
+                switch (sortBy) {
+                    case 'name':
+                        aValue = a.name.toLowerCase();
+                        bValue = b.name.toLowerCase();
+                        break;
+                    case 'artist':
+                        aValue = a.artist.toLowerCase();
+                        bValue = b.artist.toLowerCase();
+                        break;
+                    case 'date':
+                        // Sort by release date
+                        aValue = a.release_date || '';
+                        bValue = b.release_date || '';
+                        break;
+                    case 'sent':
+                        // Sort by order in chat (when the track was sent)
+                        aValue = a.sent_order || 0;
+                        bValue = b.sent_order || 0;
+                        break;
+                    default:
+                        aValue = a.name.toLowerCase();
+                        bValue = b.name.toLowerCase();
+                }
       
       if (sortOrder === 'asc') {
         return aValue < bValue ? -1 : aValue > bValue ? 1 : 0;
@@ -963,7 +976,8 @@ function App() {
                                 >
                                     <option value="name">Name</option>
                                     <option value="artist">Artist</option>
-                                    <option value="date">Date</option>
+                                    <option value="date">Release Date</option>
+                                    <option value="sent">Sent in Chat</option>
                                 </select>
                                 <button
                                     onClick={() => {
@@ -1019,6 +1033,9 @@ function App() {
                                 )}
                                 {track.release_date && (
                                   <p className="text-gray-500 text-xs">Released: {track.release_date}</p>
+                                )}
+                                {track.sent_timestamp && (
+                                  <p className="text-blue-400 text-xs">Sent: {track.sent_timestamp}</p>
                                 )}
                               </div>
                             </div>
@@ -1131,43 +1148,6 @@ function App() {
                                 className="bg-gray-500/20 hover:bg-gray-500/30 text-gray-300 text-xs px-2 py-1 rounded transition-colors"
                             >
                                 Select None
-                            </button>
-                            <button
-                              onClick={() => {
-                                // Select all tracks by the most common artist
-                                const artistCounts = {};
-                                trackDetails.forEach(track => {
-                                  artistCounts[track.artist] = (artistCounts[track.artist] || 0) + 1;
-                                });
-                                const mostCommonArtist = Object.keys(artistCounts).reduce((a, b) => 
-                                  artistCounts[a] > artistCounts[b] ? a : b
-                                );
-                                const artistTracks = trackDetails
-                                  .filter(track => track.artist === mostCommonArtist)
-                                  .map(track => track.id);
-                                setSelectedTracks(artistTracks);
-                              }}
-                              className="bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 text-xs px-2 py-1 rounded transition-colors"
-                            >
-                              Select by Top Artist
-                            </button>
-                            <button
-                              onClick={() => {
-                                // Select tracks from the last 2 years (assuming release_date is available)
-                                const twoYearsAgo = new Date();
-                                twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
-                                const recentTracks = trackDetails
-                                  .filter(track => {
-                                    if (!track.release_date) return false;
-                                    const releaseDate = new Date(track.release_date);
-                                    return releaseDate >= twoYearsAgo;
-                                  })
-                                  .map(track => track.id);
-                                setSelectedTracks(recentTracks);
-                              }}
-                              className="bg-green-500/20 hover:bg-green-500/30 text-green-300 text-xs px-2 py-1 rounded transition-colors"
-                            >
-                              Select Recent (2 years)
                             </button>
                           </div>
                         )}

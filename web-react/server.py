@@ -763,7 +763,6 @@ def get_track_details():
             for file in os.listdir(temp_dir):
                 if file.endswith('.txt'):
                     # Check if this file matches the requested chat name
-                    # The file might have an ID suffix, so we need to match the base name
                     file_base_name = file.replace('.txt', '')
                     
                     # Try exact match first
@@ -779,6 +778,26 @@ def get_track_details():
                             if base_name == chat_name:
                                 chat_file = os.path.join(temp_dir, file)
                                 break
+                    
+                    # Try fuzzy matching for chat names with emojis or special characters
+                    # Remove emojis and special characters for comparison
+                    import re
+                    clean_file_name = re.sub(r'[^\w\s-]', '', file_base_name).strip()
+                    clean_chat_name = re.sub(r'[^\w\s-]', '', chat_name).strip()
+                    
+                    # Try match without ID suffix on cleaned names
+                    if ' - ' in clean_file_name:
+                        clean_parts = clean_file_name.split(' - ')
+                        if len(clean_parts) > 1 and clean_parts[-1].isdigit():
+                            clean_base_name = ' - '.join(clean_parts[:-1])
+                            if clean_base_name.lower() == clean_chat_name.lower():
+                                chat_file = os.path.join(temp_dir, file)
+                                break
+                    
+                    # Try direct fuzzy match on cleaned names
+                    if clean_file_name.lower() == clean_chat_name.lower():
+                        chat_file = os.path.join(temp_dir, file)
+                        break
             
             if not chat_file:
                 return jsonify({
@@ -786,33 +805,59 @@ def get_track_details():
                     'error': f'No chat file found for "{chat_name}" after export'
                 }), 500
             
-            # Extract Spotify track IDs from the chat file
-            grep_cmd = [
-                'grep', '-Eo', 'open\\.spotify\\.com/track/[A-Za-z0-9]+',
-                chat_file
-            ]
+            # Extract Spotify track IDs and their order in the chat
+            # Use the order they appear in the chat as a proxy for when they were sent
+            track_data = {}  # track_id -> order_index
+            track_order = []  # List to maintain order of tracks as they appear
             
-            grep_result = subprocess.run(
-                grep_cmd,
-                capture_output=True,
-                text=True
-            )
+            try:
+                with open(chat_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                
+                # Split content into lines and process each line
+                lines = content.split('\n')
+                for line_index, line in enumerate(lines):
+                    if 'open.spotify.com/track/' in line:
+                        # Extract track ID
+                        track_id = None
+                        for part in line.split():
+                            if 'open.spotify.com/track/' in part:
+                                # Extract track ID from URL
+                                track_id = part.split('/track/')[-1]
+                                # Remove any query parameters or fragments
+                                track_id = track_id.split('?')[0].split('#')[0]
+                                if len(track_id) == 22:  # Valid Spotify track ID length
+                                    break
+                        
+                        if track_id and len(track_id) == 22 and track_id.isalnum():
+                            # Use the order they appear in the chat as the "sent" order
+                            # This gives us a chronological sequence based on chat position
+                            if track_id not in track_data:  # Avoid duplicates
+                                track_data[track_id] = len(track_order)  # Store order index
+                                track_order.append(track_id)  # Maintain order
+                                
+            except Exception as e:
+                logger.warning(f"Error reading chat file for timestamps: {e}")
+                # Fallback to simple grep approach
+                grep_cmd = [
+                    'grep', '-Eo', 'open\\.spotify\\.com/track/[A-Za-z0-9]+',
+                    chat_file
+                ]
+                
+                grep_result = subprocess.run(
+                    grep_cmd,
+                    capture_output=True,
+                    text=True
+                )
+                
+                if grep_result.returncode == 0 and grep_result.stdout.strip():
+                    for line in grep_result.stdout.strip().split('\n'):
+                        if 'open.spotify.com/track/' in line:
+                            track_id = line.split('/track/')[-1]
+                            if len(track_id) == 22:
+                                track_data[track_id] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
-            if grep_result.returncode != 0 or not grep_result.stdout.strip():
-                return jsonify({
-                    'success': True,
-                    'tracks': []
-                })
-            
-            # Extract unique track IDs
-            track_ids = set()
-            for line in grep_result.stdout.strip().split('\n'):
-                if 'open.spotify.com/track/' in line:
-                    track_id = line.split('/track/')[-1]
-                    if len(track_id) == 22:  # Valid Spotify track ID length
-                        track_ids.add(track_id)
-            
-            if not track_ids:
+            if not track_data:
                 return jsonify({
                     'success': True,
                     'tracks': []
@@ -829,25 +874,54 @@ def get_track_details():
                 
                 # Get track details in batches (Spotify API limit is 50 tracks per request)
                 tracks = []
-                track_ids_list = list(track_ids)
+                track_ids_list = list(track_data.keys())
+                
+                # Debug: Log first few track IDs to see what we're working with
+                logger.info(f"First 5 track IDs extracted: {track_ids_list[:5]}")
                 
                 for i in range(0, len(track_ids_list), 50):
                     batch_ids = track_ids_list[i:i+50]
-                    track_details = sp.tracks(batch_ids)
+                    logger.info(f"Processing batch {i//50 + 1}: {len(batch_ids)} track IDs")
+                    logger.debug(f"Batch track IDs: {batch_ids}")
                     
-                    for track in track_details['tracks']:
+                    try:
+                        track_details = sp.tracks(batch_ids)
+                    except Exception as e:
+                        logger.error(f"Spotify API error for batch: {e}")
+                        logger.error(f"Problematic track IDs: {batch_ids}")
+                        continue
+                    
+                    for i, track in enumerate(track_details['tracks']):
                         if track:  # Skip None tracks (invalid IDs)
-                            tracks.append({
-                                'id': track['id'],
-                                'name': track['name'],
-                                'artist': ', '.join([artist['name'] for artist in track['artists']]),
-                                'album': track['album']['name'],
-                                'duration': f"{track['duration_ms'] // 60000}:{(track['duration_ms'] % 60000) // 1000:02d}",
-                                'spotify_url': track['external_urls']['spotify'],
-                                'album_art': track['album']['images'][0]['url'] if track['album']['images'] else None,
-                                'release_date': track['album']['release_date'],
-                                'popularity': track['popularity']
-                            })
+                            track_id = track['id']
+                            sent_order = track_data.get(track_id, 0) # Get order in chat
+                            
+                            # Create a more meaningful "sent" display based on order
+                            # Show as "Track #X" where X is the order in the chat
+                            sent_display = f"Track #{sent_order + 1}" if sent_order >= 0 else "Unknown order"
+                            
+                            # Validate track data before adding
+                            if track.get('name') and track.get('artists') and track.get('album'):
+                                tracks.append({
+                                    'id': track_id,
+                                    'name': track['name'],
+                                    'artist': ', '.join([artist['name'] for artist in track['artists']]),
+                                    'album': track['album']['name'],
+                                    'duration': f"{track['duration_ms'] // 60000}:{(track['duration_ms'] % 60000) // 1000:02d}",
+                                    'spotify_url': track['external_urls']['spotify'],
+                                    'album_art': track['album']['images'][0]['url'] if track['album']['images'] else None,
+                                    'release_date': track['album']['release_date'],
+                                    'popularity': track['popularity'],
+                                    'sent_timestamp': sent_display, # Show order in chat
+                                    'sent_order': sent_order # Store numeric order for sorting
+                                })
+                            else:
+                                logger.warning(f"Skipping invalid track data: {track}")
+                        else:
+                            # Log invalid track IDs for debugging
+                            if i < len(batch_ids):
+                                invalid_id = batch_ids[i]
+                                logger.warning(f"Invalid Spotify track ID: {invalid_id}")
                 
                 # Clean up temporary directory
                 shutil.rmtree(temp_dir, ignore_errors=True)

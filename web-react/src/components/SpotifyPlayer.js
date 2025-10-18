@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 
 const SpotifyPlayer = ({ track, onClose }) => {
   const [player, setPlayer] = useState(null);
@@ -6,29 +6,48 @@ const SpotifyPlayer = ({ track, onClose }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
-  const playerRef = useRef(null);
+  const [token, setToken] = useState(null);
 
   useEffect(() => {
     if (!track) return;
 
     // Initialize Spotify Web Playback SDK
     const initializePlayer = () => {
-      if (!window.Spotify) {
-        setError('Spotify Web Playback SDK not loaded');
+      // Wait for Spotify SDK to load
+      if (typeof window === 'undefined' || !window.Spotify) {
+        setError('Spotify Web Playback SDK not loaded. Please refresh the page.');
         return;
       }
 
-      const token = localStorage.getItem('spotify_token');
-      if (!token) {
-        setError('Spotify authentication required');
+      const tokenData = localStorage.getItem('spotify_token');
+      if (!tokenData) {
+        setError('Spotify authentication required. Please log in to Spotify first.');
         return;
       }
+      
+      let extractedToken;
+      try {
+        const parsed = JSON.parse(tokenData);
+        extractedToken = parsed.access_token;
+      } catch (e) {
+        // Fallback for old format
+        extractedToken = tokenData;
+      }
+      
+      if (!extractedToken) {
+        setError('Invalid Spotify token. Please log in again.');
+        return;
+      }
+      
+      // Store token in state for use in other functions
+      setToken(extractedToken);
 
-      const spotifyPlayer = new window.Spotify.Player({
-        name: 'Spotify Message Player',
-        getOAuthToken: cb => cb(token),
-        volume: 0.5
-      });
+      try {
+        const spotifyPlayer = new window.Spotify.Player({
+          name: 'Spotify Message Player',
+          getOAuthToken: cb => cb(extractedToken),
+          volume: 0.5
+        });
 
       // Error handling
       spotifyPlayer.addListener('initialization_error', ({ message }) => {
@@ -66,11 +85,15 @@ const SpotifyPlayer = ({ track, onClose }) => {
         console.log('Device ID has gone offline', device_id);
       });
 
-      // Connect to the player
-      spotifyPlayer.connect();
+        // Connect to the player
+        spotifyPlayer.connect();
 
-      setPlayer(spotifyPlayer);
-      setIsLoading(true);
+        setPlayer(spotifyPlayer);
+        setIsLoading(true);
+      } catch (err) {
+        setError(`Failed to initialize Spotify player: ${err.message}`);
+        setIsLoading(false);
+      }
     };
 
     initializePlayer();
@@ -81,6 +104,7 @@ const SpotifyPlayer = ({ track, onClose }) => {
         player.disconnect();
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [track]);
 
   const playTrack = async () => {
@@ -94,7 +118,7 @@ const SpotifyPlayer = ({ track, onClose }) => {
       const response = await fetch(`https://api.spotify.com/v1/me/player`, {
         method: 'PUT',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('spotify_token')}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -111,7 +135,7 @@ const SpotifyPlayer = ({ track, onClose }) => {
       const playResponse = await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
         method: 'PUT',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('spotify_token')}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
