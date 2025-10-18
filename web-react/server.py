@@ -49,6 +49,14 @@ except ImportError:
     SPOTIFY_AVAILABLE = False
     print("Warning: spotipy not available. Playlist name lookup disabled.")
 
+# Redis caching imports
+try:
+    import redis
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
+    print("Warning: redis not available. Caching disabled.")
+
 # Session management for OAuth
 from flask import session, redirect, url_for
 import secrets
@@ -69,6 +77,23 @@ app.config['PERMANENT_SESSION_LIFETIME'] = 3600  # 1 hour
 
 logger.info("Flask app created successfully")
 logger.info("CORS enabled")  # Enable CORS for development
+
+# Initialize Redis cache
+redis_client = None
+if REDIS_AVAILABLE:
+    try:
+        redis_client = redis.Redis(
+            host=os.environ.get('REDIS_HOST', 'localhost'),
+            port=int(os.environ.get('REDIS_PORT', 6379)),
+            db=int(os.environ.get('REDIS_DB', 0)),
+            decode_responses=True
+        )
+        # Test connection
+        redis_client.ping()
+        logger.info("Redis cache connected successfully")
+    except Exception as e:
+        logger.warning(f"Redis connection failed: {e}")
+        redis_client = None
 
 # Configuration
 UPLOAD_FOLDER = 'uploads'
@@ -102,6 +127,48 @@ if not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_SECRET:
 
 # OAuth scope for Spotify
 SPOTIFY_SCOPE = "playlist-modify-public playlist-modify-private playlist-read-private user-read-private"
+
+# Cache helper functions
+def get_cache_key(prefix, *args):
+    """Generate a cache key from prefix and arguments."""
+    return f"{prefix}:{':'.join(str(arg) for arg in args)}"
+
+def get_from_cache(key, default=None):
+    """Get value from Redis cache."""
+    if not redis_client:
+        return default
+    try:
+        value = redis_client.get(key)
+        if value:
+            return json.loads(value)
+        return default
+    except Exception as e:
+        logger.warning(f"Cache get error: {e}")
+        return default
+
+def set_cache(key, value, expire=3600):
+    """Set value in Redis cache with expiration."""
+    if not redis_client:
+        return False
+    try:
+        redis_client.setex(key, expire, json.dumps(value))
+        return True
+    except Exception as e:
+        logger.warning(f"Cache set error: {e}")
+        return False
+
+def invalidate_cache_pattern(pattern):
+    """Invalidate cache entries matching a pattern."""
+    if not redis_client:
+        return False
+    try:
+        keys = redis_client.keys(pattern)
+        if keys:
+            redis_client.delete(*keys)
+        return True
+    except Exception as e:
+        logger.warning(f"Cache invalidation error: {e}")
+        return False
 
 def get_spotify_client():
     """Get authenticated Spotify client from session."""
@@ -206,6 +273,13 @@ def allowed_file(filename):
 def scan_imessage_chats():
     """Scan iMessage database for chats with Spotify links using imessage-exporter pipeline."""
     try:
+        # Check cache first
+        cache_key = get_cache_key('imessage_scan')
+        cached_chats = get_from_cache(cache_key)
+        if cached_chats is not None:
+            logger.info("Returning cached iMessage scan results")
+            return cached_chats
+        
         # Create a temporary directory for export
         temp_dir = tempfile.mkdtemp(prefix="spotify_scan_")
         
@@ -237,7 +311,14 @@ def scan_imessage_chats():
         
         # Process each chat file to find Spotify links
         for chat_file in chat_files:
-            chat_name = os.path.basename(chat_file).replace('.txt', '')
+            raw_chat_name = os.path.basename(chat_file).replace('.txt', '')
+            # Clean up chat name by removing ID numbers (e.g., "Chat Name - 4" -> "Chat Name")
+            chat_name = raw_chat_name
+            if ' - ' in raw_chat_name:
+                # Remove the ID part (e.g., " - 4", " - 10")
+                parts = raw_chat_name.split(' - ')
+                if len(parts) > 1 and parts[-1].isdigit():
+                    chat_name = ' - '.join(parts[:-1])
             
             # Use grep to find Spotify track URLs
             grep_cmd = [
@@ -278,7 +359,11 @@ def scan_imessage_chats():
         # Sort by track count (most tracks first)
         chats.sort(key=lambda x: x['trackCount'], reverse=True)
         
-        return {'success': True, 'chats': chats}
+        # Cache the results for 30 minutes
+        result = {'success': True, 'chats': chats}
+        set_cache(cache_key, result, expire=1800)
+        
+        return result
         
     except subprocess.TimeoutExpired:
         return {'error': 'Export timed out after 5 minutes'}
@@ -624,6 +709,178 @@ def health_check():
         logger.error(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/track-details', methods=['POST'])
+def get_track_details():
+    """Get detailed track information for a chat using real data from Smart Detection"""
+    try:
+        data = request.get_json()
+        chat_name = data.get('chat_name')
+        
+        if not chat_name:
+            return jsonify({'success': False, 'error': 'Chat name required'}), 400
+        
+        logger.info(f"Getting track details for chat: {chat_name}")
+        
+        # Check cache first
+        cache_key = get_cache_key('track_details', chat_name)
+        cached_tracks = get_from_cache(cache_key)
+        if cached_tracks is not None:
+            logger.info(f"Returning cached track details for {chat_name}")
+            return jsonify({
+                'success': True,
+                'tracks': cached_tracks
+            })
+        
+        # Use the same method as Smart Detection to get real track data
+        try:
+            # Create a temporary directory for export
+            temp_dir = tempfile.mkdtemp(prefix="spotify_track_details_")
+            
+            # Use imessage-exporter to export all chats (since --chat-name is not supported)
+            export_cmd = [
+                'imessage-exporter',
+                '--format', 'txt',
+                '--db-path', os.path.expanduser("~/Library/Messages/chat.db"),
+                '--export-path', temp_dir
+            ]
+            
+            result = subprocess.run(
+                export_cmd,
+                capture_output=True,
+                text=True,
+                timeout=60  # 1 minute timeout
+            )
+            
+            if result.returncode != 0:
+                logger.error(f"Failed to export chat {chat_name}: {result.stderr}")
+                return jsonify({
+                    'success': False,
+                    'error': f'Failed to export chat: {result.stderr}'
+                }), 500
+            
+            # Find the exported chat file that matches the requested chat name
+            chat_file = None
+            for file in os.listdir(temp_dir):
+                if file.endswith('.txt'):
+                    # Check if this file matches the requested chat name
+                    # The file might have an ID suffix, so we need to match the base name
+                    file_base_name = file.replace('.txt', '')
+                    
+                    # Try exact match first
+                    if file_base_name == chat_name:
+                        chat_file = os.path.join(temp_dir, file)
+                        break
+                    
+                    # Try match without ID suffix (e.g., "Chat Name - 4" matches "Chat Name")
+                    if ' - ' in file_base_name:
+                        parts = file_base_name.split(' - ')
+                        if len(parts) > 1 and parts[-1].isdigit():
+                            base_name = ' - '.join(parts[:-1])
+                            if base_name == chat_name:
+                                chat_file = os.path.join(temp_dir, file)
+                                break
+            
+            if not chat_file:
+                return jsonify({
+                    'success': False,
+                    'error': f'No chat file found for "{chat_name}" after export'
+                }), 500
+            
+            # Extract Spotify track IDs from the chat file
+            grep_cmd = [
+                'grep', '-Eo', 'open\\.spotify\\.com/track/[A-Za-z0-9]+',
+                chat_file
+            ]
+            
+            grep_result = subprocess.run(
+                grep_cmd,
+                capture_output=True,
+                text=True
+            )
+            
+            if grep_result.returncode != 0 or not grep_result.stdout.strip():
+                return jsonify({
+                    'success': True,
+                    'tracks': []
+                })
+            
+            # Extract unique track IDs
+            track_ids = set()
+            for line in grep_result.stdout.strip().split('\n'):
+                if 'open.spotify.com/track/' in line:
+                    track_id = line.split('/track/')[-1]
+                    if len(track_id) == 22:  # Valid Spotify track ID length
+                        track_ids.add(track_id)
+            
+            if not track_ids:
+                return jsonify({
+                    'success': True,
+                    'tracks': []
+                })
+            
+            # Get track details from Spotify API
+            try:
+                sp = get_spotify_client()
+                if not sp:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Spotify authentication required'
+                    }), 401
+                
+                # Get track details in batches (Spotify API limit is 50 tracks per request)
+                tracks = []
+                track_ids_list = list(track_ids)
+                
+                for i in range(0, len(track_ids_list), 50):
+                    batch_ids = track_ids_list[i:i+50]
+                    track_details = sp.tracks(batch_ids)
+                    
+                    for track in track_details['tracks']:
+                        if track:  # Skip None tracks (invalid IDs)
+                            tracks.append({
+                                'id': track['id'],
+                                'name': track['name'],
+                                'artist': ', '.join([artist['name'] for artist in track['artists']]),
+                                'album': track['album']['name'],
+                                'duration': f"{track['duration_ms'] // 60000}:{(track['duration_ms'] % 60000) // 1000:02d}",
+                                'spotify_url': track['external_urls']['spotify'],
+                                'album_art': track['album']['images'][0]['url'] if track['album']['images'] else None,
+                                'release_date': track['album']['release_date'],
+                                'popularity': track['popularity']
+                            })
+                
+                # Clean up temporary directory
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                
+                # Cache the results for 1 hour
+                set_cache(cache_key, tracks, expire=3600)
+                
+                return jsonify({
+                    'success': True,
+                    'tracks': tracks
+                })
+                
+            except Exception as e:
+                logger.error(f"Error getting track details from Spotify: {e}")
+                return jsonify({
+                    'success': False,
+                    'error': 'Failed to get track details from Spotify'
+                }), 500
+                
+        except Exception as e:
+            logger.error(f"Error processing chat export: {e}")
+            return jsonify({
+                'success': False,
+                'error': 'Failed to process chat export'
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"Error in track details endpoint: {e}")
+        return jsonify({
+            'success': False,
+            'error': 'Internal server error'
+        }), 500
+
 # OAuth endpoints
 @app.route('/api/auth/spotify')
 def spotify_login():
@@ -904,11 +1161,28 @@ def find_available_port(start_port=8004):
 
 if __name__ == "__main__":
     try:
-        port = find_available_port(8004)
+        import os
+        
+        # Check if running in production
+        if os.getenv('PORT'):
+            # Production deployment (Railway, Heroku, etc.)
+            port = int(os.getenv('PORT'))
+            debug = False
+            print(f"🚀 Starting spotify_message web server in PRODUCTION mode...")
+            print(f"🔧 API endpoints available at: http://localhost:{port}/api/")
+        else:
+            # Development mode
+            port = find_available_port(8004)
+            debug = False
+            print(f"🚀 Starting spotify_message web server...")
+            print(f"📱 React app will be available at: http://localhost:3000")
+            print(f"🔧 API endpoints available at: http://localhost:{port}/api/")
+        
         logger.info(f"Starting Flask server on port {port}")
         print(f"🚀 Flask server starting on port {port}")
         print(f"🔧 API endpoints: http://localhost:{port}/api/")
-        app.run(host='0.0.0.0', port=port, debug=False)
+        
+        app.run(host='0.0.0.0', port=port, debug=debug)
     except Exception as e:
         logger.error(f"Failed to start Flask server: {e}")
         logger.error(traceback.format_exc())

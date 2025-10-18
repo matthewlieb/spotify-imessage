@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
+import SpotifyPlayer from './components/SpotifyPlayer';
 
 function App() {
+  // State management
   const [activeTab, setActiveTab] = useState('smart-detect');
   const [chatName, setChatName] = useState('');
   const [selectedChat, setSelectedChat] = useState(null);
@@ -15,8 +17,19 @@ function App() {
   const [scanError, setScanError] = useState('');
   const [playlistSearchResult, setPlaylistSearchResult] = useState(null);
   const [isSearchingPlaylist, setIsSearchingPlaylist] = useState(false);
-  
   const [showProcessingOptions, setShowProcessingOptions] = useState(false);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [selectedTracks, setSelectedTracks] = useState([]);
+  const [showTrackPreview, setShowTrackPreview] = useState(false);
+  const [isLoadingTracks, setIsLoadingTracks] = useState(false);
+  const [trackDetails, setTrackDetails] = useState([]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [tracksPerPage] = useState(50);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortBy, setSortBy] = useState('name'); // 'name', 'artist', 'date'
+  const [sortOrder, setSortOrder] = useState('asc'); // 'asc', 'desc'
+  const [showSpotifyPlayer, setShowSpotifyPlayer] = useState(false);
+  const [selectedTrackForPlayer, setSelectedTrackForPlayer] = useState(null);
 
   // OAuth authentication state
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -25,51 +38,25 @@ function App() {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const hasHandledOAuthRef = useRef(false);
 
-  // API base URL - automatically detected from environment or smart defaults
-  const getApiBaseUrl = () => {
-    // First try environment variable
-    if (process.env.REACT_APP_API_URL) {
-      return process.env.REACT_APP_API_URL;
-    }
-    
-    // Fallback to localhost with common ports
-    const ports = [8004, 8005, 8000, 5000, 3001];
-    
-    // Try to detect if backend is running on any of these ports
-    for (const port of ports) {
-      try {
-        // This is a simple check - in production you'd want more sophisticated detection
-        if (typeof window !== 'undefined') {
-          // We're in the browser, use the current port
-          return `http://localhost:${port}`;
-        }
-      } catch (e) {
-        continue;
-      }
-    }
-    
-    // Default fallback
-    return 'http://localhost:8004';
-  };
-
-  const API_BASE_URL = getApiBaseUrl();
+  // API base URL
+  const API_BASE_URL = 'http://localhost:8004';
+  
+  // Platform detection
+  const isMacOS = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+  const hasIMessage = isMacOS; // iMessage only available on macOS
 
   // OAuth authentication functions
   const checkAuthStatus = async () => {
     try {
-      console.log('Checking auth status with API_BASE_URL:', API_BASE_URL);
       const response = await fetch(`${API_BASE_URL}/api/auth/status`, {
-        credentials: 'include' // Include cookies for session
+        credentials: 'include'
       });
-      console.log('Auth status response:', response.status);
       
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
       
       const data = await response.json();
-      console.log('Auth status data:', data);
-      
       setIsAuthenticated(data.authenticated);
       setSpotifyUser(data.user);
     } catch (error) {
@@ -82,13 +69,8 @@ function App() {
   };
 
   const handleSpotifyLogin = async () => {
-    console.log('🔥 handleSpotifyLogin function called!');
-    console.log('🔥 Current window location:', window.location.href);
-    console.log('🔥 API_BASE_URL:', API_BASE_URL);
-    
     setIsLoggingIn(true);
     try {
-      console.log('🔥 Making fetch request to:', `${API_BASE_URL}/api/auth/spotify`);
       const response = await fetch(`${API_BASE_URL}/api/auth/spotify`, {
         credentials: 'include',
         method: 'GET',
@@ -97,38 +79,23 @@ function App() {
         }
       });
       
-      console.log('🔥 Response received:');
-      console.log('🔥 - Status:', response.status);
-      console.log('🔥 - Status Text:', response.statusText);
-      console.log('🔥 - Headers:', Object.fromEntries(response.headers.entries()));
-      console.log('🔥 - URL:', response.url);
-      
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('🔥 HTTP Error Response:', errorText);
         throw new Error(`HTTP error! status: ${response.status}, text: ${errorText}`);
       }
       
       const data = await response.json();
-      console.log('🔥 Response data:', data);
       
       if (data.auth_url) {
-        console.log('🔥 About to redirect to Spotify OAuth URL:', data.auth_url);
-        console.log('🔥 Current window location before redirect:', window.location.href);
-        
-        // Add a small delay to ensure logs are visible
         setTimeout(() => {
-          console.log('🔥 Executing redirect now...');
           window.location.href = data.auth_url;
         }, 100);
       } else {
-        console.error('🔥 No auth_url in response:', data);
         alert('Failed to initiate Spotify login - no auth URL received');
         setIsLoggingIn(false);
       }
     } catch (error) {
-      console.error('🔥 Error initiating Spotify login:', error);
-      console.error('🔥 Error stack:', error.stack);
+      console.error('Error initiating Spotify login:', error);
       alert(`Error connecting to server: ${error.message}`);
       setIsLoggingIn(false);
     }
@@ -136,7 +103,6 @@ function App() {
 
   const exchangeAuthToken = async (authToken) => {
     try {
-      console.log('🔥 Exchanging auth token:', authToken);
       const response = await fetch(`${API_BASE_URL}/api/auth/exchange-token`, {
         method: 'POST',
         headers: {
@@ -146,28 +112,20 @@ function App() {
         body: JSON.stringify({ token: authToken })
       });
       
-      console.log('🔥 Token exchange response status:', response.status);
-      
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
       
       const data = await response.json();
-      console.log('🔥 Token exchange response data:', data);
       
       if (data.success) {
-        console.log('🔥 Token exchange successful!');
         setIsAuthenticated(true);
         setSpotifyUser(data.user);
-        
-        // Don't call checkAuthStatus immediately - we already have the user data
-        console.log('🔥 Setting authenticated state directly from token exchange');
       } else {
-        console.error('🔥 Token exchange failed:', data.error);
         alert('Authentication failed. Please try again.');
       }
     } catch (error) {
-      console.error('🔥 Error exchanging auth token:', error);
+      console.error('Error exchanging auth token:', error);
       alert('Authentication failed. Please try again.');
     }
   };
@@ -188,71 +146,44 @@ function App() {
 
   // Check authentication status on component mount
   useEffect(() => {
-    console.log('🔥 useEffect called - checking auth status and URL params');
-    console.log('🔥 Current URL:', window.location.href);
-    console.log('🔥 Search params:', window.location.search);
-    console.log('🔥 Has handled OAuth:', hasHandledOAuthRef.current);
-    
-    // If we've already handled OAuth, don't run again
     if (hasHandledOAuthRef.current) {
-      console.log('🔥 Already handled OAuth, skipping...');
       return;
     }
     
-    // Check for OAuth callback parameters first
     const urlParams = new URLSearchParams(window.location.search);
     const authResult = urlParams.get('spotify_auth');
     
-    console.log('🔥 URL params:', Object.fromEntries(urlParams.entries()));
-    console.log('🔥 Auth result from URL:', authResult);
-    
     if (authResult === 'success') {
-      console.log('🔥 OAuth success detected! Checking for auth token...');
       const authToken = urlParams.get('token');
       
       if (authToken) {
-        console.log('🔥 Found auth token, exchanging for session data...');
-        // Mark that we've handled OAuth (synchronously)
         hasHandledOAuthRef.current = true;
-        // Exchange the temporary token for session data
         exchangeAuthToken(authToken);
-        // Clean up URL immediately
         window.history.replaceState({}, document.title, window.location.pathname);
-        // Reset loading state
         setIsLoggingIn(false);
-        return; // Don't call checkAuthStatus
+        return;
       } else {
-        console.log('🔥 No auth token found, checking auth status...');
-        // Mark that we've handled OAuth (synchronously)
         hasHandledOAuthRef.current = true;
-        // Fallback to checking auth status
         setTimeout(() => {
-          console.log('🔥 Re-checking auth status after OAuth success');
           checkAuthStatus();
         }, 1000);
-        // Clean up URL
         window.history.replaceState({}, document.title, window.location.pathname);
-        // Reset loading state
         setIsLoggingIn(false);
         return;
       }
     } else if (authResult === 'error') {
-      console.log('🔥 OAuth error detected!');
-      // Mark that we've handled OAuth (synchronously)
       hasHandledOAuthRef.current = true;
       alert('Spotify authentication failed. Please try again.');
-      // Clean up URL
       window.history.replaceState({}, document.title, window.location.pathname);
-      // Reset loading state
       setIsLoggingIn(false);
       return;
     } else {
-      console.log('🔥 No OAuth callback parameters found');
-      // No OAuth callback, just check auth status
-      checkAuthStatus();
+      // Add a small delay to ensure the auth check completes
+      setTimeout(() => {
+        checkAuthStatus();
+      }, 500);
     }
     
-    // Reset loading state on mount
     setIsLoggingIn(false);
   }, []);
 
@@ -274,7 +205,7 @@ function App() {
       if (data.success) {
         setChats(data.chats);
         if (data.chats.length === 0) {
-          setScanError(''); // Clear error, let the info message show instead
+          setScanError('');
         }
       } else {
         setScanError(data.error || 'Failed to scan messages');
@@ -395,7 +326,6 @@ function App() {
       const data = await response.json();
       
       if (data.job_id) {
-        // Poll for job status
         pollJobStatus(data.job_id);
       } else {
         throw new Error(data.error || 'Failed to start processing');
@@ -436,15 +366,108 @@ function App() {
   const handleFileUpload = (event) => {
     const file = event.target.files?.[0];
     if (file) {
-      alert(`File selected: ${file.name}`);
-      // Handle file processing here
+      setSelectedFile(file);
+      setShowProcessingOptions(true);
     }
+  };
+
+  const loadTrackDetails = async (chat) => {
+    setIsLoadingTracks(true);
+    setTrackDetails([]);
+    setCurrentPage(1); // Reset to first page
+    setSearchQuery(''); // Reset search
+    setSortBy('name'); // Reset sort
+    
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/track-details`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ chat_name: chat.name }),
+        credentials: 'include'
+      });
+
+      const data = await response.json();
+      
+      if (data.success) {
+        setTrackDetails(data.tracks);
+      } else {
+        console.error('Failed to load track details:', data.error);
+        setTrackDetails([]);
+      }
+    } catch (error) {
+      console.error('Error loading track details:', error);
+      setTrackDetails([]);
+    } finally {
+      setIsLoadingTracks(false);
+    }
+  };
+
+  // Filter and sort tracks
+  const getFilteredAndSortedTracks = () => {
+    let filtered = trackDetails;
+    
+    // Apply search filter
+    if (searchQuery) {
+      filtered = filtered.filter(track => 
+        track.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        track.artist.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        track.album.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+    }
+    
+    // Apply sorting
+    filtered.sort((a, b) => {
+      let aValue, bValue;
+      
+      switch (sortBy) {
+        case 'name':
+          aValue = a.name.toLowerCase();
+          bValue = b.name.toLowerCase();
+          break;
+        case 'artist':
+          aValue = a.artist.toLowerCase();
+          bValue = b.artist.toLowerCase();
+          break;
+        case 'date':
+          // For now, we'll use a simple sort since we don't have actual dates
+          aValue = a.name.toLowerCase();
+          bValue = b.name.toLowerCase();
+          break;
+        default:
+          aValue = a.name.toLowerCase();
+          bValue = b.name.toLowerCase();
+      }
+      
+      if (sortOrder === 'asc') {
+        return aValue < bValue ? -1 : aValue > bValue ? 1 : 0;
+      } else {
+        return aValue > bValue ? -1 : aValue < bValue ? 1 : 0;
+      }
+    });
+    
+    return filtered;
+  };
+
+  // Get paginated tracks
+  const getPaginatedTracks = () => {
+    const filtered = getFilteredAndSortedTracks();
+    const startIndex = (currentPage - 1) * tracksPerPage;
+    const endIndex = startIndex + tracksPerPage;
+    return filtered.slice(startIndex, endIndex);
+  };
+
+  // Get total pages
+  const getTotalPages = () => {
+    const filtered = getFilteredAndSortedTracks();
+    return Math.ceil(filtered.length / tracksPerPage);
   };
 
   const handleTabChange = (newTab) => {
     setActiveTab(newTab);
     
-    // Clear ALL state when switching tabs to prevent carry-over
+    // Clear ALL state when switching tabs
     setSelectedChat(null);
     setChatName('');
     setChats([]);
@@ -454,12 +477,12 @@ function App() {
     setPlaylistSearchResult(null);
     setCurrentJob(null);
     setShowProcessingOptions(false);
+    setSelectedFile(null);
     
     // Reset form states
     setShowMetadata(false);
     setDryRun(false);
   };
-
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 text-white">
@@ -490,10 +513,7 @@ function App() {
                 Sign in with your Spotify account to create and manage playlists
               </p>
               <button
-                onClick={() => {
-                  console.log('🔥 Button clicked!');
-                  handleSpotifyLogin();
-                }}
+                onClick={handleSpotifyLogin}
                 disabled={isLoggingIn}
                 className="bg-green-500 hover:bg-green-600 disabled:bg-green-400 disabled:cursor-not-allowed text-white font-semibold px-8 py-3 rounded-full transition-colors flex items-center gap-2 mx-auto"
               >
@@ -530,338 +550,668 @@ function App() {
             <>
               {/* Tab Navigation */}
               <div className="flex flex-wrap justify-center gap-2 mb-8">
-            <button
-              onClick={() => handleTabChange('smart-detect')}
-              className={`px-4 py-2 rounded-full transition-colors ${
-                activeTab === 'smart-detect' 
-                  ? 'bg-green-500 text-white' 
-                  : 'bg-white/10 hover:bg-white/20'
-              }`}
-            >
-              Smart Detection
-            </button>
-            <button
-              onClick={() => handleTabChange('chat-name')}
-              className={`px-4 py-2 rounded-full transition-colors ${
-                activeTab === 'chat-name' 
-                  ? 'bg-green-500 text-white' 
-                  : 'bg-white/10 hover:bg-white/20'
-              }`}
-            >
-              Chat Name
-            </button>
-            <button
-              onClick={() => handleTabChange('file-upload')}
-              className={`px-4 py-2 rounded-full transition-colors ${
-                activeTab === 'file-upload' 
-                  ? 'bg-green-500 text-white' 
-                  : 'bg-white/10 hover:bg-white/20'
-              }`}
-            >
-              File Upload
-            </button>
-          </div>
-
-          {/* Smart Detection Tab */}
-          {activeTab === 'smart-detect' && (
-            <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 shadow-2xl">
-              <div className="text-center mb-8">
-                <h2 className="text-2xl font-bold mb-4">Smart Message Detection</h2>
-                <p className="text-gray-300 mb-6">
-                  Let us scan your messages to find conversations with Spotify links
-                </p>
-                <button
-                  onClick={handleSmartScan}
-                  disabled={isScanning}
-                  className="bg-green-500 hover:bg-green-600 disabled:bg-gray-600 text-white font-semibold px-8 py-3 rounded-full transition-colors"
-                >
-                  {isScanning ? 'Scanning...' : 'Scan Messages'}
-                </button>
-              </div>
-
-              {scanError && (
-                <div className="bg-red-500/20 border border-red-500/30 rounded-lg p-4 mb-6">
-                  <p className="text-red-300">{scanError}</p>
-                </div>
-              )}
-
-              {!isScanning && !scanError && chats.length === 0 && (
-                <div className="bg-blue-500/20 border border-blue-500/30 rounded-lg p-4 mb-6">
-                  <p className="text-blue-300 mb-2">
-                    <strong>No conversations with Spotify links found.</strong>
-                  </p>
-                  <p className="text-blue-200 text-sm">
-                    This could mean you don't have any Spotify links in your messages, or try using the "Chat Name" tab for manual entry.
-                  </p>
-                </div>
-              )}
-
-              {/* Display found conversations */}
-              {chats.length > 0 && (
-                <div className="space-y-4">
-                  <h3 className="text-xl font-semibold mb-4">Found Conversations</h3>
-                  
-                  {chats.map((chat, index) => (
-                    <div key={index} className="bg-white/5 border border-white/10 rounded-lg p-4">
-                      <div className="flex justify-between items-center">
-                        <div className="flex-1">
-                          <h4 className="font-semibold text-lg">{chat.name}</h4>
-                          <p className="text-gray-300">{chat.trackCount} tracks</p>
-                          <p className="text-sm text-gray-400">{chat.lastActivity}</p>
-                        </div>
-                        
-                        <button
-                          onClick={() => {
-                            setSelectedChat(chat);
-                            setShowProcessingOptions(true);
-                          }}
-                          className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg transition-colors"
-                        >
-                          Select Chat
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Chat Name Tab */}
-          {activeTab === 'chat-name' && (
-            <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 shadow-2xl">
-              <h2 className="text-2xl font-bold mb-4">Enter Chat Name</h2>
-              <p className="text-gray-300 mb-6">
-                Type the exact name of your iMessage or Android Messages chat
-              </p>
-              
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium mb-2">Chat Name</label>
-                  <input
-                    type="text"
-                    value={chatName}
-                    onChange={(e) => setChatName(e.target.value)}
-                    placeholder="e.g., My daughter is dating Kodak Black"
-                    className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-green-500"
-                  />
-                </div>
-                
-
-              </div>
-            </div>
-          )}
-
-          {/* File Upload Tab */}
-          {activeTab === 'file-upload' && (
-            <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 shadow-2xl">
-              <h2 className="text-2xl font-bold mb-4">Upload Export File</h2>
-              <p className="text-gray-300 mb-6">
-                Upload your exported message file (TXT format)
-              </p>
-              
-              <div className="border-2 border-dashed border-white/20 rounded-lg p-8 text-center">
-                <p className="text-gray-300 mb-4">
-                  Drag and drop your export file here, or click to browse
-                </p>
-                <input
-                  type="file"
-                  accept=".txt"
-                  onChange={handleFileUpload}
-                  className="hidden"
-                  id="file-upload"
-                />
-                <label
-                  htmlFor="file-upload"
-                  className="bg-green-500 hover:bg-green-600 text-white font-semibold px-6 py-3 rounded-full transition-colors cursor-pointer"
-                >
-                  Choose File
-                </label>
-              </div>
-              
-              {/* Toggle for Processing Options */}
-              <div className="mt-6 text-center">
-                <button
-                  onClick={() => setShowProcessingOptions(!showProcessingOptions)}
-                  className="text-gray-400 hover:text-white transition-colors flex items-center space-x-2 mx-auto"
-                >
-                  <span>{showProcessingOptions ? '▼' : '▶'}</span>
-                  <span>{showProcessingOptions ? 'Hide' : 'Show'} Processing Options</span>
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Processing Options */}
-          {((activeTab === 'smart-detect' && selectedChat) || 
-            (activeTab === 'chat-name' && chatName.trim()) || 
-            (activeTab === 'file-upload' && showProcessingOptions)) && (
-            <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 shadow-2xl">
-              <div className="flex justify-between items-center mb-4">
-                <h2 className="text-2xl font-bold">Processing Options</h2>
-                {activeTab === 'file-upload' && (
-                  <span className="bg-yellow-500/20 border border-yellow-500/50 text-yellow-200 text-xs px-2 py-1 rounded-full">
-                    ⭐ Premium
-                  </span>
+                {hasIMessage && (
+                  <button
+                    onClick={() => handleTabChange('smart-detect')}
+                    className={`px-4 py-2 rounded-full transition-colors ${
+                      activeTab === 'smart-detect' 
+                        ? 'bg-green-500 text-white' 
+                        : 'bg-white/10 hover:bg-white/20'
+                    }`}
+                  >
+                    Smart Detection
+                  </button>
                 )}
+                {hasIMessage && (
+                  <button
+                    onClick={() => handleTabChange('chat-name')}
+                    className={`px-4 py-2 rounded-full transition-colors ${
+                      activeTab === 'chat-name' 
+                        ? 'bg-green-500 text-white' 
+                        : 'bg-white/10 hover:bg-white/20'
+                    }`}
+                  >
+                    Chat Name
+                  </button>
+                )}
+                <button
+                  onClick={() => handleTabChange('file-upload')}
+                  className={`px-4 py-2 rounded-full transition-colors ${
+                    activeTab === 'file-upload' 
+                      ? 'bg-green-500 text-white' 
+                      : 'bg-white/10 hover:bg-white/20'
+                  }`}
+                >
+                  File Upload {!hasIMessage && '(Recommended)'}
+                </button>
               </div>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <label className="block text-sm font-medium mb-2">Spotify Playlist Name</label>
-                  <div className="flex space-x-2">
-                    <input
-                      type="text"
-                      value={playlistName}
-                      onChange={(e) => setPlaylistName(e.target.value)}
-                      placeholder="e.g., My Favorite Songs"
-                      className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-green-500"
-                    />
+
+              {/* Smart Detection Tab */}
+              {activeTab === 'smart-detect' && (
+                <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 shadow-2xl">
+                  <div className="text-center mb-8">
+                    <h2 className="text-2xl font-bold mb-4">Smart Message Detection</h2>
+                    <p className="text-gray-300 mb-6">
+                      Let us scan your messages to find conversations with Spotify links
+                    </p>
                     <button
-                      onClick={handlePlaylistSearch}
-                      disabled={isSearchingPlaylist}
-                      className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-600 text-white font-semibold px-6 py-3 rounded-full transition-colors"
+                      onClick={handleSmartScan}
+                      disabled={isScanning}
+                      className="bg-green-500 hover:bg-green-600 disabled:bg-gray-600 text-white font-semibold px-8 py-3 rounded-full transition-colors"
                     >
-                      {isSearchingPlaylist ? 'Searching...' : 'Search Playlist'}
-                    </button>
-                    <button
-                      onClick={handleCreatePlaylist}
-                      disabled={isSearchingPlaylist}
-                      className="bg-purple-500 hover:bg-purple-600 disabled:bg-gray-600 text-white font-semibold px-6 py-3 rounded-full transition-colors"
-                    >
-                      {isSearchingPlaylist ? 'Creating...' : 'Create Playlist'}
+                      {isScanning ? 'Scanning...' : 'Scan Messages'}
                     </button>
                   </div>
-                  {playlistSearchResult && (
-                    <div className="mt-4 p-3 bg-white/10 border border-white/20 rounded-lg text-sm text-gray-300">
-                      {playlistSearchResult.error ? (
-                        <p className="text-red-300">{playlistSearchResult.error}</p>
-                      ) : (
-                        <>
-                          <p>Found Playlist: <span className="font-semibold">{playlistSearchResult.name}</span></p>
-                          <p>ID: <span className="font-mono text-gray-400">{playlistSearchResult.id}</span></p>
-                        </>
-                      )}
+
+                  {scanError && (
+                    <div className="bg-red-500/20 border border-red-500/30 rounded-lg p-4 mb-6">
+                      <p className="text-red-300">{scanError}</p>
+                    </div>
+                  )}
+
+                  {!isScanning && !scanError && chats.length === 0 && (
+                    <div className="bg-blue-500/20 border border-blue-500/30 rounded-lg p-4 mb-6">
+                      <p className="text-blue-300 mb-2">
+                        <strong>No conversations with Spotify links found.</strong>
+                      </p>
+                      <p className="text-blue-200 text-sm">
+                        This could mean you don't have any Spotify links in your messages, or try using the "Chat Name" tab for manual entry.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Display found conversations */}
+                  {chats.length > 0 && (
+                    <div className="space-y-4">
+                      <h3 className="text-xl font-semibold mb-4">Found Conversations</h3>
+                      
+                      {chats.map((chat, index) => (
+                        <div key={index} className="bg-white/5 border border-white/10 rounded-lg p-4">
+                          <div className="flex justify-between items-center">
+                            <div className="flex-1">
+                              <h4 className="font-semibold text-lg">{chat.name}</h4>
+                              <p className="text-gray-300">{chat.trackCount} tracks</p>
+                              <p className="text-sm text-gray-400">{chat.lastActivity}</p>
+                            </div>
+                            
+                            <div className="flex space-x-2">
+                              <button
+                                onClick={() => {
+                                  setSelectedChat(chat);
+                                  setShowTrackPreview(true);
+                                  loadTrackDetails(chat);
+                                }}
+                                className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition-colors"
+                              >
+                                Preview Tracks
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setSelectedChat(chat);
+                                  setShowProcessingOptions(true);
+                                }}
+                                className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg transition-colors"
+                              >
+                                Select All
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
-                
-                <div className="space-y-4">
-                  <label className="flex items-center space-x-2">
-                    <input
-                      type="checkbox"
-                      checked={showMetadata}
-                      onChange={(e) => setShowMetadata(e.target.checked)}
-                      className="text-green-500"
-                    />
-                    <span>Show track metadata</span>
-                  </label>
+              )}
+
+              {/* Chat Name Tab */}
+              {activeTab === 'chat-name' && (
+                <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 shadow-2xl">
+                  <h2 className="text-2xl font-bold mb-4">Enter Chat Name</h2>
+                  <p className="text-gray-300 mb-6">
+                    Type the exact name of your iMessage or Android Messages chat
+                  </p>
                   
-                  <label className="flex items-center space-x-2">
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Chat Name</label>
+                      <input
+                        type="text"
+                        value={chatName}
+                        onChange={(e) => setChatName(e.target.value)}
+                        placeholder="e.g., My daughter is dating Kodak Black"
+                        className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-green-500"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* File Upload Tab */}
+              {activeTab === 'file-upload' && (
+                <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 shadow-2xl">
+                  <h2 className="text-2xl font-bold mb-4">Upload Export File</h2>
+                  {!hasIMessage && (
+                    <div className="bg-blue-500/20 border border-blue-500/30 rounded-lg p-4 mb-6">
+                      <h3 className="font-semibold text-blue-300 mb-2">📱 For Windows/Linux/Android Users</h3>
+                      <p className="text-blue-200 text-sm mb-2">
+                        Since you're not on macOS, you'll need to export your messages first:
+                      </p>
+                      <ol className="text-blue-200 text-sm list-decimal list-inside space-y-1">
+                        <li>Export your Android Messages to a .txt file</li>
+                        <li>Upload the file here</li>
+                        <li>Preview and select tracks</li>
+                        <li>Create your playlist!</li>
+                      </ol>
+                    </div>
+                  )}
+                  <p className="text-gray-300 mb-6">
+                    Upload your exported message file (TXT format)
+                  </p>
+                  
+                  <div className="border-2 border-dashed border-white/20 rounded-lg p-8 text-center">
+                    <p className="text-gray-300 mb-4">
+                      Drag and drop your export file here, or click to browse
+                    </p>
                     <input
-                      type="checkbox"
-                      checked={dryRun}
-                      onChange={(e) => setDryRun(e.target.checked)}
-                      className="text-green-500"
+                      type="file"
+                      accept=".txt"
+                      onChange={handleFileUpload}
+                      className="hidden"
+                      id="file-upload"
                     />
-                    <span>Dry run (preview only)</span>
-                  </label>
+                    <label
+                      htmlFor="file-upload"
+                      className="bg-green-500 hover:bg-green-600 text-white font-semibold px-6 py-3 rounded-full transition-colors cursor-pointer"
+                    >
+                      Choose File
+                    </label>
+                  </div>
+                  
+                  {selectedFile && (
+                    <div className="mt-4 p-4 bg-white/5 border border-white/10 rounded-lg">
+                      <p className="text-gray-300">Selected: {selectedFile.name}</p>
+                    </div>
+                  )}
+                  
+                  {/* Toggle for Processing Options */}
+                  <div className="mt-6 text-center">
+                    <button
+                      onClick={() => setShowProcessingOptions(!showProcessingOptions)}
+                      className="text-gray-400 hover:text-white transition-colors flex items-center space-x-2 mx-auto"
+                    >
+                      <span>{showProcessingOptions ? '▼' : '▶'}</span>
+                      <span>{showProcessingOptions ? 'Hide' : 'Show'} Processing Options</span>
+                    </button>
+                  </div>
                 </div>
-              </div>
-              
-              <div className="mt-6">
-                <button
-                  onClick={() => {
-                    if (selectedChat) {
-                      handleProcessChat(selectedChat);
-                    } else if (chatName.trim()) {
-                      handleProcessChat({ name: chatName.trim() });
-                    }
-                  }}
-                  disabled={isProcessing || !playlistId.trim() || (!selectedChat && !chatName.trim())}
-                  className="bg-green-500 hover:bg-green-600 disabled:bg-gray-600 text-white font-semibold px-8 py-3 rounded-full transition-colors"
-                >
-                  {isProcessing ? 'Processing...' : 'Process Chat'}
-                </button>
-              </div>
-            </div>
-          )}
+              )}
 
-          {/* Progress Bar */}
-          {currentJob && currentJob.status === 'processing' && (
-            <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 shadow-2xl">
-              <h3 className="text-lg font-semibold mb-4">Processing Progress</h3>
-              <div className="space-y-4">
-                <div className="w-full bg-white/10 rounded-full h-2">
-                  <div
-                    className="bg-green-500 h-2 rounded-full transition-all duration-300"
-                    style={{ width: `${currentJob.progress}%` }}
-                  ></div>
+              {/* Processing Options */}
+              {((activeTab === 'smart-detect' && selectedChat) || 
+                (activeTab === 'chat-name' && chatName.trim()) || 
+                (activeTab === 'file-upload' && showProcessingOptions)) && (
+                <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 shadow-2xl">
+                  <div className="flex justify-between items-center mb-4">
+                    <h2 className="text-2xl font-bold">Processing Options</h2>
+                    {activeTab === 'file-upload' && (
+                      <span className="bg-yellow-500/20 border border-yellow-500/50 text-yellow-200 text-xs px-2 py-1 rounded-full">
+                        ⭐ Premium
+                      </span>
+                    )}
+                  </div>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Spotify Playlist Name</label>
+                      <div className="flex space-x-2">
+                        <input
+                          type="text"
+                          value={playlistName}
+                          onChange={(e) => setPlaylistName(e.target.value)}
+                          placeholder="e.g., My Favorite Songs"
+                          className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-green-500"
+                        />
+                        <button
+                          onClick={handlePlaylistSearch}
+                          disabled={isSearchingPlaylist}
+                          className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-600 text-white font-semibold px-6 py-3 rounded-full transition-colors"
+                        >
+                          {isSearchingPlaylist ? 'Searching...' : 'Search Playlist'}
+                        </button>
+                        <button
+                          onClick={handleCreatePlaylist}
+                          disabled={isSearchingPlaylist}
+                          className="bg-purple-500 hover:bg-purple-600 disabled:bg-gray-600 text-white font-semibold px-6 py-3 rounded-full transition-colors"
+                        >
+                          {isSearchingPlaylist ? 'Creating...' : 'Create Playlist'}
+                        </button>
+                      </div>
+                      {playlistSearchResult && (
+                        <div className="mt-4 p-3 bg-white/10 border border-white/20 rounded-lg text-sm text-gray-300">
+                          {playlistSearchResult.error ? (
+                            <p className="text-red-300">{playlistSearchResult.error}</p>
+                          ) : (
+                            <>
+                              <p>Found Playlist: <span className="font-semibold">{playlistSearchResult.name}</span></p>
+                              <p>ID: <span className="font-mono text-gray-400">{playlistSearchResult.id}</span></p>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div className="space-y-4">
+                      <label className="flex items-center space-x-2">
+                        <input
+                          type="checkbox"
+                          checked={showMetadata}
+                          onChange={(e) => setShowMetadata(e.target.checked)}
+                          className="text-green-500"
+                        />
+                        <span>Show track metadata</span>
+                      </label>
+                      
+                      <label className="flex items-center space-x-2">
+                        <input
+                          type="checkbox"
+                          checked={dryRun}
+                          onChange={(e) => setDryRun(e.target.checked)}
+                          className="text-green-500"
+                        />
+                        <span>Dry run (preview only)</span>
+                      </label>
+                    </div>
+                  </div>
+                  
+                  <div className="mt-6">
+                    <button
+                      onClick={() => {
+                        if (selectedChat) {
+                          handleProcessChat(selectedChat);
+                        } else if (chatName.trim()) {
+                          handleProcessChat({ name: chatName.trim() });
+                        }
+                      }}
+                      disabled={isProcessing || !playlistId.trim() || (!selectedChat && !chatName.trim())}
+                      className="bg-green-500 hover:bg-green-600 disabled:bg-gray-600 text-white font-semibold px-8 py-3 rounded-full transition-colors"
+                    >
+                      {isProcessing ? 'Processing...' : 'Process Chat'}
+                    </button>
+                  </div>
                 </div>
-                <p className="text-gray-300">{currentJob.message}</p>
-              </div>
-            </div>
-          )}
+              )}
 
-          {/* Results */}
-          {currentJob && currentJob.status === 'completed' && (
-            <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 shadow-2xl">
-              <div className="text-center">
-                <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <span className="text-2xl">🎵</span>
+              {/* Progress Bar */}
+              {currentJob && currentJob.status === 'processing' && (
+                <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 shadow-2xl">
+                  <h3 className="text-lg font-semibold mb-4">Processing Progress</h3>
+                  <div className="space-y-4">
+                    <div className="w-full bg-white/10 rounded-full h-2">
+                      <div
+                        className="bg-green-500 h-2 rounded-full transition-all duration-300"
+                        style={{ width: `${currentJob.progress}%` }}
+                      ></div>
+                    </div>
+                    <p className="text-gray-300">{currentJob.message}</p>
+                  </div>
                 </div>
-                <h3 className="text-2xl font-bold mb-2">Processing Complete!</h3>
-                <p className="text-gray-300 mb-6">
-                  Successfully processed {currentJob.tracks_added || 0} tracks
-                </p>
-                
-                <div className="space-y-4">
-                  <button
-                    onClick={() => {
-                      setCurrentJob(null);
-                      setSelectedChat(null);
-                      setChatName('');
-                    }}
-                    className="bg-green-500 hover:bg-green-600 text-white font-semibold px-6 py-3 rounded-full transition-colors"
-                  >
-                    Process Another Chat
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
+              )}
 
-          {/* Error Results */}
-          {currentJob && currentJob.status === 'error' && (
-            <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 shadow-2xl">
-              <div className="text-center">
-                <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <span className="text-2xl">❌</span>
+              {/* Results */}
+              {currentJob && currentJob.status === 'completed' && (
+                <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 shadow-2xl">
+                  <div className="text-center">
+                    <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <span className="text-2xl">🎵</span>
+                    </div>
+                    <h3 className="text-2xl font-bold mb-2">Processing Complete!</h3>
+                    <p className="text-gray-300 mb-6">
+                      Successfully processed {currentJob.tracks_added || 0} tracks
+                    </p>
+                    
+                    <div className="space-y-4">
+                      <button
+                        onClick={() => {
+                          setCurrentJob(null);
+                          setSelectedChat(null);
+                          setChatName('');
+                        }}
+                        className="bg-green-500 hover:bg-green-600 text-white font-semibold px-6 py-3 rounded-full transition-colors"
+                      >
+                        Process Another Chat
+                      </button>
+                    </div>
+                  </div>
                 </div>
-                <h3 className="text-2xl font-bold mb-2">Processing Failed</h3>
-                <p className="text-gray-300 mb-6">
-                  {currentJob.message}
-                </p>
-                
-                <div className="space-y-4">
-                  <button
-                    onClick={() => {
-                      setCurrentJob(null);
-                      setSelectedChat(null);
-                      setChatName('');
-                    }}
-                    className="bg-gray-500 hover:bg-gray-600 text-white font-semibold px-6 py-3 rounded-full transition-colors"
-                  >
-                    Try Again
-                  </button>
+              )}
+
+              {/* Error Results */}
+              {currentJob && currentJob.status === 'error' && (
+                <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 shadow-2xl">
+                  <div className="text-center">
+                    <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <span className="text-2xl">❌</span>
+                    </div>
+                    <h3 className="text-2xl font-bold mb-2">Processing Failed</h3>
+                    <p className="text-gray-300 mb-6">
+                      {currentJob.message}
+                    </p>
+                    
+                    <div className="space-y-4">
+                      <button
+                        onClick={() => {
+                          setCurrentJob(null);
+                          setSelectedChat(null);
+                          setChatName('');
+                        }}
+                        className="bg-gray-500 hover:bg-gray-600 text-white font-semibold px-6 py-3 rounded-full transition-colors"
+                      >
+                        Try Again
+                      </button>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
-          )}
+              )}
+
+              {/* Track Preview Modal */}
+              {showTrackPreview && selectedChat && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                  <div className="bg-gray-900 border border-white/20 rounded-2xl p-6 max-w-4xl w-full max-h-[80vh] overflow-hidden">
+                    <div className="flex justify-between items-center mb-4">
+                      <h3 className="text-2xl font-bold">Preview Tracks - {selectedChat.name}</h3>
+                      <button
+                        onClick={() => {
+                          setShowTrackPreview(false);
+                          setSelectedTracks([]);
+                        }}
+                        className="text-gray-400 hover:text-white text-2xl"
+                      >
+                        ×
+                      </button>
+                    </div>
+                    
+                    {/* Search and Sort Controls */}
+                    {trackDetails.length > 0 && (
+                        <div className="mb-6 space-y-4">
+                            {/* Search Bar */}
+                            <div className="flex items-center space-x-4">
+                                <input
+                                    type="text"
+                                    placeholder="Search tracks, artists, or albums..."
+                                    value={searchQuery}
+                                    onChange={(e) => {
+                                        setSearchQuery(e.target.value);
+                                        setCurrentPage(1); // Reset to first page when searching
+                                    }}
+                                    className="flex-1 px-4 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500"
+                                />
+                                <div className="text-sm text-gray-400">
+                                    {getFilteredAndSortedTracks().length} of {trackDetails.length} tracks
+                                </div>
+                            </div>
+                            
+                            {/* Sort Controls */}
+                            <div className="flex items-center space-x-4">
+                                <label className="text-sm text-gray-400">Sort by:</label>
+                                <select
+                                    value={sortBy}
+                                    onChange={(e) => {
+                                        setSortBy(e.target.value);
+                                        setCurrentPage(1);
+                                    }}
+                                    className="px-3 py-1 bg-white/10 border border-white/20 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                                >
+                                    <option value="name">Name</option>
+                                    <option value="artist">Artist</option>
+                                    <option value="date">Date</option>
+                                </select>
+                                <button
+                                    onClick={() => {
+                                        setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+                                        setCurrentPage(1);
+                                    }}
+                                    className="px-3 py-1 bg-white/10 border border-white/20 rounded text-white text-sm hover:bg-white/20 transition-colors"
+                                >
+                                    {sortOrder === 'asc' ? '↑' : '↓'}
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="space-y-4 max-h-96 overflow-y-auto">
+                        {isLoadingTracks ? (
+                            <div className="text-center py-8">
+                                <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-green-500 mb-4"></div>
+                                <p className="text-gray-400">Loading track details...</p>
+                                <p className="text-gray-500 text-sm">This may take a moment for large conversations</p>
+                            </div>
+                        ) : getPaginatedTracks().length > 0 ? (
+                            getPaginatedTracks().map((track, index) => (
+                          <div key={index} className="flex items-center justify-between bg-white/5 border border-white/10 rounded-lg p-4">
+                            <div className="flex items-center space-x-4">
+                              <input
+                                type="checkbox"
+                                checked={selectedTracks.includes(track.id)}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setSelectedTracks([...selectedTracks, track.id]);
+                                  } else {
+                                    setSelectedTracks(selectedTracks.filter(id => id !== track.id));
+                                  }
+                                }}
+                                className="text-green-500"
+                              />
+                              
+                              {/* Album Art */}
+                              {track.album_art && (
+                                <img
+                                  src={track.album_art}
+                                  alt={`${track.album} cover`}
+                                  className="w-12 h-12 rounded-lg object-cover"
+                                />
+                              )}
+                              
+                              <div className="flex-1">
+                                <h4 className="font-semibold">{track.name}</h4>
+                                <p className="text-gray-300 text-sm">{track.artist}</p>
+                                {track.album && (
+                                  <p className="text-gray-400 text-xs">{track.album}</p>
+                                )}
+                                {track.release_date && (
+                                  <p className="text-gray-500 text-xs">Released: {track.release_date}</p>
+                                )}
+                              </div>
+                            </div>
+                            <div className="text-right space-y-2">
+                              <p className="text-sm text-gray-400">{track.duration}</p>
+                              <div className="flex space-x-2">
+                                <button
+                                  onClick={() => {
+                                    setSelectedTrackForPlayer(track);
+                                    setShowSpotifyPlayer(true);
+                                  }}
+                                  className="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded text-xs transition-colors flex items-center space-x-1"
+                                >
+                                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
+                                  </svg>
+                                  <span>Play</span>
+                                </button>
+                                <a
+                                  href={track.spotify_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-green-400 hover:text-green-300 text-xs"
+                                >
+                                  Open in Spotify
+                                </a>
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                        ) : (
+                            <div className="text-center py-8">
+                                <p className="text-gray-400">
+                                    {searchQuery ? 'No tracks match your search' : 'No track details available'}
+                                </p>
+                            </div>
+                        )}
+                    </div>
+                    
+                    {/* Pagination Controls */}
+                    {getTotalPages() > 1 && (
+                        <div className="flex justify-center items-center space-x-2 mt-4">
+                            <button
+                                onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                                disabled={currentPage === 1}
+                                className="px-3 py-1 bg-white/10 border border-white/20 rounded text-white text-sm hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            >
+                                ← Previous
+                            </button>
+                            
+                            <div className="flex items-center space-x-1">
+                                {Array.from({ length: Math.min(5, getTotalPages()) }, (_, i) => {
+                                    const page = i + 1;
+                                    return (
+                                        <button
+                                            key={page}
+                                            onClick={() => setCurrentPage(page)}
+                                            className={`px-3 py-1 rounded text-sm transition-colors ${
+                                                currentPage === page
+                                                    ? 'bg-green-500 text-white'
+                                                    : 'bg-white/10 text-white hover:bg-white/20'
+                                            }`}
+                                        >
+                                            {page}
+                                        </button>
+                                    );
+                                })}
+                                {getTotalPages() > 5 && (
+                                    <>
+                                        <span className="text-gray-400">...</span>
+                                        <button
+                                            onClick={() => setCurrentPage(getTotalPages())}
+                                            className="px-3 py-1 bg-white/10 border border-white/20 rounded text-white text-sm hover:bg-white/20 transition-colors"
+                                        >
+                                            {getTotalPages()}
+                                        </button>
+                                    </>
+                                )}
+                            </div>
+                            
+                            <button
+                                onClick={() => setCurrentPage(Math.min(getTotalPages(), currentPage + 1))}
+                                disabled={currentPage === getTotalPages()}
+                                className="px-3 py-1 bg-white/10 border border-white/20 rounded text-white text-sm hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            >
+                                Next →
+                            </button>
+                        </div>
+                    )}
+                    
+                    <div className="flex justify-between items-center mt-6">
+                        <div className="flex items-center space-x-4">
+                            <div className="text-sm text-gray-400">
+                                {selectedTracks.length} of {getFilteredAndSortedTracks().length || selectedChat.trackCount || 0} tracks selected
+                            </div>
+                        {trackDetails.length > 0 && (
+                          <div className="flex space-x-2">
+                            <button
+                              onClick={() => {
+                                setSelectedTracks(trackDetails.map(track => track.id));
+                              }}
+                              className="bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 text-xs px-2 py-1 rounded transition-colors"
+                            >
+                              Select All
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setSelectedTracks([]);
+                                }}
+                                className="bg-gray-500/20 hover:bg-gray-500/30 text-gray-300 text-xs px-2 py-1 rounded transition-colors"
+                            >
+                                Select None
+                            </button>
+                            <button
+                              onClick={() => {
+                                // Select all tracks by the most common artist
+                                const artistCounts = {};
+                                trackDetails.forEach(track => {
+                                  artistCounts[track.artist] = (artistCounts[track.artist] || 0) + 1;
+                                });
+                                const mostCommonArtist = Object.keys(artistCounts).reduce((a, b) => 
+                                  artistCounts[a] > artistCounts[b] ? a : b
+                                );
+                                const artistTracks = trackDetails
+                                  .filter(track => track.artist === mostCommonArtist)
+                                  .map(track => track.id);
+                                setSelectedTracks(artistTracks);
+                              }}
+                              className="bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 text-xs px-2 py-1 rounded transition-colors"
+                            >
+                              Select by Top Artist
+                            </button>
+                            <button
+                              onClick={() => {
+                                // Select tracks from the last 2 years (assuming release_date is available)
+                                const twoYearsAgo = new Date();
+                                twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
+                                const recentTracks = trackDetails
+                                  .filter(track => {
+                                    if (!track.release_date) return false;
+                                    const releaseDate = new Date(track.release_date);
+                                    return releaseDate >= twoYearsAgo;
+                                  })
+                                  .map(track => track.id);
+                                setSelectedTracks(recentTracks);
+                              }}
+                              className="bg-green-500/20 hover:bg-green-500/30 text-green-300 text-xs px-2 py-1 rounded transition-colors"
+                            >
+                              Select Recent (2 years)
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                      <div className="space-x-2">
+                        <button
+                          onClick={() => {
+                            setShowTrackPreview(false);
+                            setSelectedTracks([]);
+                          }}
+                          className="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={() => {
+                            setShowTrackPreview(false);
+                            setShowProcessingOptions(true);
+                          }}
+                          disabled={selectedTracks.length === 0}
+                          className="bg-green-500 hover:bg-green-600 disabled:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors"
+                        >
+                          Process Selected ({selectedTracks.length})
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>
       </div>
+
+      {/* Spotify Player Modal */}
+      {showSpotifyPlayer && selectedTrackForPlayer && (
+        <SpotifyPlayer
+          track={selectedTrackForPlayer}
+          onClose={() => {
+            setShowSpotifyPlayer(false);
+            setSelectedTrackForPlayer(null);
+          }}
+        />
+      )}
     </div>
   );
 }

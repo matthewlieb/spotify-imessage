@@ -1,193 +1,118 @@
 import React from 'react';
-import { Settings, Filter, Play, Calendar, Music, BarChart3 } from 'lucide-react';
-import { ProcessingOptions } from '../types';
 
 interface ProcessingFormProps {
-  options: ProcessingOptions;
-  onOptionsChange: (options: ProcessingOptions) => void;
-  onSubmit: () => void;
+  playlistName: string;
+  setPlaylistName: (name: string) => void;
+  playlistId: string;
+  setPlaylistId: (id: string) => void;
+  showMetadata: boolean;
+  setShowMetadata: (show: boolean) => void;
+  dryRun: boolean;
+  setDryRun: (dry: boolean) => void;
+  playlistSearchResult: any;
+  isSearchingPlaylist: boolean;
+  onPlaylistSearch: () => void;
+  onCreatePlaylist: () => void;
+  onProcess: () => void;
   isProcessing: boolean;
+  canProcess: boolean;
 }
 
 export const ProcessingForm: React.FC<ProcessingFormProps> = ({
-  options,
-  onOptionsChange,
-  onSubmit,
+  playlistName,
+  setPlaylistName,
+  playlistId,
+  setPlaylistId,
+  showMetadata,
+  setShowMetadata,
+  dryRun,
+  setDryRun,
+  playlistSearchResult,
+  isSearchingPlaylist,
+  onPlaylistSearch,
+  onCreatePlaylist,
+  onProcess,
   isProcessing,
+  canProcess
 }) => {
-  const handleChange = (key: keyof ProcessingOptions, value: any) => {
-    onOptionsChange({
-      ...options,
-      [key]: value,
-    });
-  };
-
-  const handleCheckboxChange = (key: keyof ProcessingOptions) => {
-    onOptionsChange({
-      ...options,
-      [key]: !options[key],
-    });
-  };
-
   return (
-    <div className="space-y-6">
-      {/* Processing Options */}
-      <div className="glass-card p-6">
-        <div className="flex items-center space-x-2 mb-4">
-          <Settings className="w-5 h-5 text-spotify-400" />
-          <h3 className="text-lg font-semibold">Processing Options</h3>
-        </div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium mb-2">File Type</label>
-            <select
-              value={options.command_type}
-              onChange={(e) => handleChange('command_type', e.target.value)}
-              className="input-field w-full"
-            >
-              <option value="android">Android Messages Export</option>
-              <option value="file">Generic Text File</option>
-            </select>
-          </div>
-          
-          <div>
-            <label className="block text-sm font-medium mb-2">
-              Spotify Playlist ID
-            </label>
+    <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 shadow-2xl">
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-2xl font-bold">Processing Options</h2>
+      </div>
+      
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div>
+          <label className="block text-sm font-medium mb-2">Spotify Playlist Name</label>
+          <div className="flex space-x-2">
             <input
               type="text"
-              value={options.playlist_id || ''}
-              onChange={(e) => handleChange('playlist_id', e.target.value)}
-              placeholder="22-character playlist ID"
-              className="input-field w-full"
+              value={playlistName}
+              onChange={(e) => setPlaylistName(e.target.value)}
+              placeholder="e.g., My Favorite Songs"
+              className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-green-500"
             />
+            <button
+              onClick={onPlaylistSearch}
+              disabled={isSearchingPlaylist}
+              className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-600 text-white font-semibold px-6 py-3 rounded-full transition-colors"
+            >
+              {isSearchingPlaylist ? 'Searching...' : 'Search Playlist'}
+            </button>
+            <button
+              onClick={onCreatePlaylist}
+              disabled={isSearchingPlaylist}
+              className="bg-purple-500 hover:bg-purple-600 disabled:bg-gray-600 text-white font-semibold px-6 py-3 rounded-full transition-colors"
+            >
+              {isSearchingPlaylist ? 'Creating...' : 'Create Playlist'}
+            </button>
           </div>
-        </div>
-      </div>
-
-      {/* Date Filtering */}
-      <div className="glass-card p-6">
-        <div className="flex items-center space-x-2 mb-4">
-          <Filter className="w-5 h-5 text-spotify-400" />
-          <h3 className="text-lg font-semibold">Date Filtering</h3>
+          {playlistSearchResult && (
+            <div className="mt-4 p-3 bg-white/10 border border-white/20 rounded-lg text-sm text-gray-300">
+              {playlistSearchResult.error ? (
+                <p className="text-red-300">{playlistSearchResult.error}</p>
+              ) : (
+                <>
+                  <p>Found Playlist: <span className="font-semibold">{playlistSearchResult.name}</span></p>
+                  <p>ID: <span className="font-mono text-gray-400">{playlistSearchResult.id}</span></p>
+                </>
+              )}
+            </div>
+          )}
         </div>
         
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <label className="block text-sm font-medium mb-2">Start Date</label>
-            <div className="relative">
-              <Calendar className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-white/40" />
-              <input
-                type="date"
-                value={options.start_date || ''}
-                onChange={(e) => handleChange('start_date', e.target.value)}
-                className="input-field w-full pl-10"
-              />
-            </div>
-          </div>
-          
-          <div>
-            <label className="block text-sm font-medium mb-2">End Date</label>
-            <div className="relative">
-              <Calendar className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-white/40" />
-              <input
-                type="date"
-                value={options.end_date || ''}
-                onChange={(e) => handleChange('end_date', e.target.value)}
-                className="input-field w-full pl-10"
-              />
-            </div>
-          </div>
-          
-          <div>
-            <label className="block text-sm font-medium mb-2">Days Back</label>
-            <input
-              type="number"
-              value={options.days_back || ''}
-              onChange={(e) => handleChange('days_back', e.target.value ? parseInt(e.target.value) : undefined)}
-              placeholder="e.g., 30"
-              min="1"
-              max="365"
-              className="input-field w-full"
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Additional Options */}
-      <div className="glass-card p-6">
-        <div className="flex items-center space-x-2 mb-4">
-          <BarChart3 className="w-5 h-5 text-spotify-400" />
-          <h3 className="text-lg font-semibold">Additional Options</h3>
-        </div>
-        
-        <div className="space-y-3">
-          <label className="flex items-center space-x-3 cursor-pointer group">
+        <div className="space-y-4">
+          <label className="flex items-center space-x-2">
             <input
               type="checkbox"
-              checked={options.show_metadata}
-              onChange={() => handleCheckboxChange('show_metadata')}
-              className="w-5 h-5 text-spotify-500 bg-white/10 border-white/20 rounded focus:ring-spotify-500 focus:ring-2"
+              checked={showMetadata}
+              onChange={(e) => setShowMetadata(e.target.checked)}
+              className="text-green-500"
             />
-            <div className="flex items-center space-x-2">
-              <Music className="w-4 h-4 text-spotify-400" />
-              <span className="group-hover:text-spotify-400 transition-colors">
-                Show track metadata (artist/title)
-              </span>
-            </div>
+            <span>Show track metadata</span>
           </label>
           
-          <label className="flex items-center space-x-3 cursor-pointer group">
+          <label className="flex items-center space-x-2">
             <input
               type="checkbox"
-              checked={options.dry_run}
-              onChange={() => handleCheckboxChange('dry_run')}
-              className="w-5 h-5 text-spotify-500 bg-white/10 border-white/20 rounded focus:ring-spotify-500 focus:ring-2"
+              checked={dryRun}
+              onChange={(e) => setDryRun(e.target.checked)}
+              className="text-green-500"
             />
-            <div className="flex items-center space-x-2">
-              <Play className="w-4 h-4 text-spotify-400" />
-              <span className="group-hover:text-spotify-400 transition-colors">
-                Dry run (don't add to playlist)
-              </span>
-            </div>
-          </label>
-          
-          <label className="flex items-center space-x-3 cursor-pointer group">
-            <input
-              type="checkbox"
-              checked={options.stats}
-              onChange={() => handleCheckboxChange('stats')}
-              className="w-5 h-5 text-spotify-500 bg-white/10 border-white/20 rounded focus:ring-spotify-500 focus:ring-2"
-            />
-            <div className="flex items-center space-x-2">
-              <BarChart3 className="w-4 h-4 text-spotify-400" />
-              <span className="group-hover:text-spotify-400 transition-colors">
-                Show detailed statistics
-              </span>
-            </div>
+            <span>Dry run (preview only)</span>
           </label>
         </div>
       </div>
-
-      {/* Submit Button */}
-      <button
-        onClick={onSubmit}
-        disabled={isProcessing}
-        className="btn-primary w-full flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        {isProcessing ? (
-          <>
-            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-            <span>Processing...</span>
-          </>
-        ) : (
-          <>
-            <Play className="w-5 h-5" />
-            <span>Process File</span>
-          </>
-        )}
-      </button>
+      
+      <div className="mt-6">
+        <button
+          onClick={onProcess}
+          disabled={isProcessing || canProcess}
+          className="bg-green-500 hover:bg-green-600 disabled:bg-gray-600 text-white font-semibold px-8 py-3 rounded-full transition-colors"
+        >
+          {isProcessing ? 'Processing...' : 'Process Chat'}
+        </button>
+      </div>
     </div>
   );
 };
