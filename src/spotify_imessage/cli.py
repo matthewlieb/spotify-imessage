@@ -29,6 +29,15 @@ import click
 from spotipy import Spotify
 from spotipy.oauth2 import SpotifyOAuth
 
+# Import compatibility and resilience systems
+try:
+    from .compatibility import (
+        check_system_compatibility, handle_api_failure, get_system_info
+    )
+    COMPATIBILITY_AVAILABLE = True
+except ImportError:
+    COMPATIBILITY_AVAILABLE = False
+
 # Import Android module
 from . import android
 
@@ -394,6 +403,50 @@ def _get_track_metadata(sp, track_ids: list) -> dict:
 def cli():
     """Sync Spotify tracks into a playlist from various sources."""
     pass
+
+
+@cli.command()
+def check():
+    """Check system compatibility and resilience status."""
+    if not COMPATIBILITY_AVAILABLE:
+        click.echo("⚠️  Compatibility checking not available. Running in basic mode.")
+        return
+    
+    try:
+        system_info = get_system_info()
+        
+        click.echo("🔍 Zingaroo System Compatibility Check")
+        click.echo("=" * 50)
+        
+        # Python version
+        python_version = system_info["compatibility"]["python_version"]
+        click.echo(f"🐍 Python: {'.'.join(map(str, python_version))}")
+        
+        # Package status
+        click.echo("\n📦 Package Status:")
+        for package, info in system_info["compatibility"]["packages"].items():
+            status = "✅" if info["compatible"] else "⚠️"
+            click.echo(f"  {status} {package}: {info['installed']} (recommended: {info['required']})")
+        
+        # Warnings and errors
+        if system_info["compatibility"]["warnings"]:
+            click.echo("\n⚠️  Warnings:")
+            for warning in system_info["compatibility"]["warnings"]:
+                click.echo(f"  • {warning}")
+        
+        if system_info["compatibility"]["errors"]:
+            click.echo("\n❌ Errors:")
+            for error in system_info["compatibility"]["errors"]:
+                click.echo(f"  • {error}")
+        
+        # Overall status
+        if system_info["compatibility"]["compatible"]:
+            click.echo("\n✅ System is compatible and ready to use!")
+        else:
+            click.echo("\n❌ System has compatibility issues. Please fix errors above.")
+            
+    except Exception as e:
+        click.echo(f"❌ Compatibility check failed: {e}")
 
 
 @cli.command()

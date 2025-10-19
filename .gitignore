@@ -39,6 +39,13 @@ ENV/
 *.secrets
 *.env
 .env*
+.env.local
+.env.production
+.env.development
+
+# Security files
+security_config.py
+error_handler.py
 
 # Log files (may contain sensitive data)
 *.log

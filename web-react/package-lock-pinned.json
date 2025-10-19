@@ -1,0 +1,32 @@
+{
+  "name": "zingaroo",
+  "version": "1.0.0",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "zingaroo",
+      "version": "1.0.0",
+      "dependencies": {
+        "react": "18.2.0",
+        "react-dom": "18.2.0",
+        "react-scripts": "5.0.1"
+      }
+    },
+    "node_modules/react": {
+      "version": "18.2.0",
+      "resolved": "https://registry.npmjs.org/react/-/react-18.2.0.tgz",
+      "integrity": "sha512-/3IjMdb2L9QbBdWiW5e3P2/npwMBaU9mHCSCUzNln0ZCYbcfTsGbTJrU/kGemdH2IWmB2ioZ+zkxtmq6g09fGQ=="
+    },
+    "node_modules/react-dom": {
+      "version": "18.2.0",
+      "resolved": "https://registry.npmjs.org/react-dom/-/react-dom-18.2.0.tgz",
+      "integrity": "sha512-6IMVuUm0fweDXWrDc0aOOTXScQDTPAA5GwumBPrBO4YkJ9fCF6PnU7ZDsJR7RKX7H28T8PlK92kgh9NTT5L1g=="
+    },
+    "node_modules/react-scripts": {
+      "version": "5.0.1",
+      "resolved": "https://registry.npmjs.org/react-scripts/-/react-scripts-5.0.1.tgz",
+      "integrity": "sha512-8VAmEm/ZAwQzJ6OMXJE4y5VgkExQ8ggTp0rdW1GfTZ+Y6KACqv9nN0e3k6H4L3c0C1ZCO+YfevMv8+Zh2K7JjQ=="
+    }
+  }
+}

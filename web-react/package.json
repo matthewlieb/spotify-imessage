@@ -1,7 +1,7 @@
 {
-  "name": "spotify-message-web",
+  "name": "zingaroo",
   "version": "1.0.0",
-  "description": "Extract Spotify tracks from message exports and create amazing playlists",
+  "description": "Your friendly music-finding kangaroo that hops through your messages to discover amazing tracks",
   "private": true,
   "homepage": ".",
   "dependencies": {

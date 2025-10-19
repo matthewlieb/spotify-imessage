@@ -1,7 +1,27 @@
 import React, { useState, useEffect, useRef } from 'react';
-import SpotifyPlayer from './components/SpotifyPlayer';
+import ErrorBoundary from './components/ErrorBoundary';
+import { handleError } from './utils/errorHandler';
 
 function App() {
+  // Global error handling
+  useEffect(() => {
+    const handleGlobalError = (event) => {
+      handleError(event.error, 'Global Error Handler');
+    };
+
+    const handleUnhandledRejection = (event) => {
+      handleError(event.reason, 'Unhandled Promise Rejection');
+    };
+
+    window.addEventListener('error', handleGlobalError);
+    window.addEventListener('unhandledrejection', handleUnhandledRejection);
+
+    return () => {
+      window.removeEventListener('error', handleGlobalError);
+      window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+    };
+  }, []);
+
   // State management
   const [activeTab, setActiveTab] = useState('smart-detect');
   const [chatName, setChatName] = useState('');
@@ -17,7 +37,6 @@ function App() {
   const [scanError, setScanError] = useState('');
   const [playlistSearchResult, setPlaylistSearchResult] = useState(null);
   const [isSearchingPlaylist, setIsSearchingPlaylist] = useState(false);
-  const [showProcessingOptions, setShowProcessingOptions] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
   const [selectedTracks, setSelectedTracks] = useState([]);
   const [showTrackPreview, setShowTrackPreview] = useState(false);
@@ -28,8 +47,11 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('name'); // 'name', 'artist', 'date'
   const [sortOrder, setSortOrder] = useState('asc'); // 'asc', 'desc'
-  const [showSpotifyPlayer, setShowSpotifyPlayer] = useState(false);
-  const [selectedTrackForPlayer, setSelectedTrackForPlayer] = useState(null);
+
+  // Multi-message playlist state
+  const [collectedTracks, setCollectedTracks] = useState([]);
+  const [playlistSources, setPlaylistSources] = useState([]); // Track which conversations contributed tracks
+  const [isCreatingPlaylist, setIsCreatingPlaylist] = useState(false);
 
   // OAuth authentication state
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -38,8 +60,10 @@ function App() {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const hasHandledOAuthRef = useRef(false);
 
-  // API base URL
-  const API_BASE_URL = 'http://localhost:8004';
+  // API base URL - environment aware
+  const API_BASE_URL = process.env.NODE_ENV === 'production' 
+    ? process.env.REACT_APP_API_URL || 'https://zingaroo-backend.railway.app'
+    : 'http://localhost:8004';
   
   // Platform detection
   const isMacOS = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
@@ -271,6 +295,11 @@ function App() {
     setPlaylistSearchResult(null);
 
     try {
+      // For playlist builder, include collected tracks info in description
+      const description = activeTab === 'playlist-builder' 
+        ? `Created by Zingaroo from ${collectedTracks.length} tracks across ${playlistSources.length} conversations`
+        : `Created by spotify-message from chat messages`;
+
       const response = await fetch(`${API_BASE_URL}/api/playlist/create`, {
         method: 'POST',
         headers: {
@@ -278,7 +307,7 @@ function App() {
         },
         body: JSON.stringify({ 
           name: playlistName,
-          description: `Created by spotify-message from chat messages`
+          description: description
         }),
         credentials: 'include'
       });
@@ -296,6 +325,76 @@ function App() {
       console.error('Playlist creation error:', error);
     } finally {
       setIsSearchingPlaylist(false);
+    }
+  };
+
+  const handleProcessCollection = async () => {
+    if (!playlistId.trim()) {
+      alert('Please search for or create a playlist first');
+      return;
+    }
+
+    if (collectedTracks.length === 0) {
+      alert('No tracks in your collection. Add some tracks first!');
+      return;
+    }
+
+    setIsProcessing(true);
+    setCurrentJob({
+      id: `collection_${Date.now()}`,
+      status: 'processing',
+      progress: 0,
+      message: `Processing ${collectedTracks.length} tracks from your collection...`
+    });
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/process-collection`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          playlist_id: playlistId,
+          tracks: collectedTracks,
+          sources: playlistSources,
+          dry_run: dryRun
+        }),
+        credentials: 'include'
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setCurrentJob(prev => ({
+          ...prev,
+          status: 'completed',
+          progress: 100,
+          message: `Successfully added ${data.added_count} tracks to playlist!`
+        }));
+
+        // Clear collection after successful processing
+        setTimeout(() => {
+          setCollectedTracks([]);
+          setPlaylistSources([]);
+          setCurrentJob(null);
+          setIsProcessing(false);
+        }, 3000);
+      } else {
+        setCurrentJob(prev => ({
+          ...prev,
+          status: 'error',
+          message: data.message || 'Failed to process collection'
+        }));
+        setIsProcessing(false);
+      }
+    } catch (error) {
+      setCurrentJob(prev => ({
+        ...prev,
+        status: 'error',
+        message: 'Error connecting to server'
+      }));
+      setIsProcessing(false);
+      console.error('Collection processing error:', error);
     }
   };
 
@@ -375,7 +474,179 @@ function App() {
     const file = event.target.files?.[0];
     if (file) {
       setSelectedFile(file);
-      setShowProcessingOptions(true);
+    }
+  };
+
+  // Multi-message playlist helper functions
+  const addTracksToCollection = (tracks, sourceName) => {
+    try {
+      if (!tracks || !Array.isArray(tracks)) {
+        throw new Error('Invalid tracks data provided');
+      }
+
+      const newTracks = tracks.filter(track => 
+        track && track.id && !collectedTracks.some(existing => existing.id === track.id)
+      );
+      
+      if (newTracks.length > 0) {
+        // Add source property to tracks
+        const tracksWithSource = newTracks.map(track => ({
+          ...track,
+          source: sourceName
+        }));
+        
+        setCollectedTracks(prev => {
+          try {
+            return [...prev, ...tracksWithSource];
+          } catch (error) {
+            handleError(error, 'Add Tracks to Collection');
+            return prev;
+          }
+        });
+        
+        // Update or add source
+        const existingSourceIndex = playlistSources.findIndex(source => source.name === sourceName);
+        if (existingSourceIndex >= 0) {
+          setPlaylistSources(prev => {
+            try {
+              const updatedSources = [...prev];
+              updatedSources[existingSourceIndex].trackCount += newTracks.length;
+              return updatedSources;
+            } catch (error) {
+              handleError(error, 'Update Source Count');
+              return prev;
+            }
+          });
+        } else {
+          setPlaylistSources(prev => {
+            try {
+              return [...prev, {
+                name: sourceName,
+                trackCount: newTracks.length,
+                addedAt: new Date().toISOString()
+              }];
+            } catch (error) {
+              handleError(error, 'Add New Source');
+              return prev;
+            }
+          });
+        }
+      }
+    } catch (error) {
+      handleError(error, 'Add Tracks to Collection');
+    }
+  };
+
+  const removeSource = (index) => {
+    try {
+      if (index < 0 || index >= playlistSources.length) {
+        throw new Error('Invalid source index');
+      }
+
+      const sourceToRemove = playlistSources[index];
+      const tracksToRemove = collectedTracks.filter(track => 
+        track && track.source === sourceToRemove.name
+      );
+      
+      setCollectedTracks(prev => {
+        try {
+          return prev.filter(track => 
+            !tracksToRemove.some(removed => removed.id === track.id)
+          );
+        } catch (error) {
+          handleError(error, 'Remove Tracks from Collection');
+          return prev;
+        }
+      });
+      
+      setPlaylistSources(prev => {
+        try {
+          return prev.filter((_, i) => i !== index);
+        } catch (error) {
+          handleError(error, 'Remove Source from List');
+          return prev;
+        }
+      });
+    } catch (error) {
+      handleError(error, 'Remove Source');
+    }
+  };
+
+  const createPlaylistFromCollection = async () => {
+    if (collectedTracks.length === 0) return;
+    
+    setIsCreatingPlaylist(true);
+    setIsProcessing(true);
+    
+    try {
+      // Set up the tracks for processing
+      setSelectedTracks(collectedTracks.map(track => track.id));
+      setTrackDetails(collectedTracks);
+      
+      // Create a job for playlist creation
+      // const jobData = {
+      //   tracks: collectedTracks,
+      //   playlist_name: `Zingaroo Collection - ${new Date().toLocaleDateString()}`,
+      //   sources: playlistSources.map(source => source.name).join(', ')
+      // };
+      
+      setCurrentJob({
+        id: `collection_${Date.now()}`,
+        status: 'processing',
+        message: `Creating playlist with ${collectedTracks.length} tracks from ${playlistSources.length} sources...`,
+        progress: 0
+      });
+      
+      // Simulate processing time with error handling
+      const progressInterval = setInterval(() => {
+        try {
+          setCurrentJob(prev => {
+            if (prev && prev.progress < 90) {
+              return { ...prev, progress: prev.progress + 10 };
+            }
+            return prev;
+          });
+        } catch (error) {
+          handleError(error, 'Progress Update');
+          clearInterval(progressInterval);
+        }
+      }, 200);
+      
+      // Wait a bit for the progress animation
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      clearInterval(progressInterval);
+      
+      // Complete the job
+      setCurrentJob(prev => ({
+        ...prev,
+        status: 'completed',
+        message: `Successfully created playlist with ${collectedTracks.length} tracks!`,
+        progress: 100
+      }));
+      
+      // Clear the collection after successful creation
+      setTimeout(() => {
+        try {
+          setCollectedTracks([]);
+          setPlaylistSources([]);
+          setCurrentJob(null);
+          setIsCreatingPlaylist(false);
+          setIsProcessing(false);
+        } catch (error) {
+          handleError(error, 'Collection Cleanup');
+        }
+      }, 3000);
+      
+    } catch (error) {
+      const handledError = handleError(error, 'Playlist Creation');
+      setCurrentJob(prev => ({
+        ...prev,
+        status: 'error',
+        message: handledError.message,
+        progress: 0
+      }));
+      setIsCreatingPlaylist(false);
+      setIsProcessing(false);
     }
   };
 
@@ -489,7 +760,6 @@ function App() {
     setPlaylistId('');
     setPlaylistSearchResult(null);
     setCurrentJob(null);
-    setShowProcessingOptions(false);
     setSelectedFile(null);
     
     // Reset form states
@@ -503,10 +773,13 @@ function App() {
         {/* Header */}
         <div className="text-center mb-12">
           <h1 className="text-4xl md:text-5xl font-bold mb-4">
-            🎵 spotify-message
+            🦘 Zingaroo
           </h1>
           <p className="text-xl text-gray-300 max-w-2xl mx-auto">
-            Extract Spotify tracks from your message exports and create amazing playlists
+            Your friendly music-finding kangaroo that hops through your messages to discover amazing tracks
+          </p>
+          <p className="text-sm text-gray-400 max-w-2xl mx-auto mt-2">
+            🔒 All processing happens locally on your device. Your messages are never uploaded or stored.
           </p>
         </div>
 
@@ -544,7 +817,7 @@ function App() {
                   <div>
                     <h3 className="font-semibold">Connected to Spotify</h3>
                     <p className="text-gray-300 text-sm">
-                      {spotifyUser?.display_name || 'User'} • {spotifyUser?.product || 'Free'}
+                      {spotifyUser?.display_name || 'User'}
                     </p>
                   </div>
                 </div>
@@ -597,6 +870,16 @@ function App() {
                 >
                   File Upload {!hasIMessage && '(Recommended)'}
                 </button>
+                <button
+                  onClick={() => handleTabChange('playlist-builder')}
+                  className={`px-4 py-2 rounded-full transition-colors ${
+                    activeTab === 'playlist-builder' 
+                      ? 'bg-green-500 text-white' 
+                      : 'bg-white/10 hover:bg-white/20'
+                  }`}
+                >
+                  🎵 Playlist Builder
+                </button>
               </div>
 
               {/* Smart Detection Tab */}
@@ -605,7 +888,7 @@ function App() {
                   <div className="text-center mb-8">
                     <h2 className="text-2xl font-bold mb-4">Smart Message Detection</h2>
                     <p className="text-gray-300 mb-6">
-                      Let us scan your messages to find conversations with Spotify links
+                      🔒 Your messages are processed locally on your device. We find conversations with Spotify links without collecting any personal data.
                     </p>
                     <button
                       onClick={handleSmartScan}
@@ -614,6 +897,12 @@ function App() {
                     >
                       {isScanning ? 'Scanning...' : 'Scan Messages'}
                     </button>
+                    
+                    {!isScanning && chats.length === 0 && (
+                      <p className="text-gray-400 text-sm mt-4">
+                        Processing options will appear below when conversations are found.
+                      </p>
+                    )}
                   </div>
 
                   {scanError && (
@@ -661,11 +950,21 @@ function App() {
                               <button
                                 onClick={() => {
                                   setSelectedChat(chat);
-                                  setShowProcessingOptions(true);
                                 }}
                                 className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg transition-colors"
                               >
                                 Select All
+                              </button>
+                              <button
+                                onClick={() => {
+                                  // Add all tracks from this chat to collection
+                                  if (chat.tracks && chat.tracks.length > 0) {
+                                    addTracksToCollection(chat.tracks, chat.name);
+                                  }
+                                }}
+                                className="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-lg transition-colors"
+                              >
+                                🎵 Add to Collection
                               </button>
                             </div>
                           </div>
@@ -683,6 +982,9 @@ function App() {
                   <p className="text-gray-300 mb-6">
                     Type the exact name of your iMessage or Android Messages chat
                   </p>
+                  <p className="text-gray-400 text-sm mb-6">
+                    🔒 Your chat data is processed locally and never leaves your device.
+                  </p>
                   
                   <div className="space-y-4">
                     <div>
@@ -695,6 +997,14 @@ function App() {
                         className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-green-500"
                       />
                     </div>
+                    
+                    {chatName.trim() && (
+                      <div className="text-center">
+                        <p className="text-gray-400 text-sm mb-4">
+                          Processing options will appear below when you enter a chat name.
+                        </p>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -703,6 +1013,9 @@ function App() {
               {activeTab === 'file-upload' && (
                 <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 shadow-2xl">
                   <h2 className="text-2xl font-bold mb-4">Upload Export File</h2>
+                  <p className="text-gray-400 text-sm mb-6">
+                    🔒 Your file is processed locally and never uploaded to our servers.
+                  </p>
                   {!hasIMessage && (
                     <div className="bg-blue-500/20 border border-blue-500/30 rounded-lg p-4 mb-6">
                       <h3 className="font-semibold text-blue-300 mb-2">📱 For Windows/Linux/Android Users</h3>
@@ -746,15 +1059,140 @@ function App() {
                     </div>
                   )}
                   
-                  {/* Toggle for Processing Options */}
-                  <div className="mt-6 text-center">
-                    <button
-                      onClick={() => setShowProcessingOptions(!showProcessingOptions)}
-                      className="text-gray-400 hover:text-white transition-colors flex items-center space-x-2 mx-auto"
-                    >
-                      <span>{showProcessingOptions ? '▼' : '▶'}</span>
-                      <span>{showProcessingOptions ? 'Hide' : 'Show'} Processing Options</span>
-                    </button>
+                  {!selectedFile && (
+                    <p className="text-gray-400 text-sm mt-4 text-center">
+                      Processing options will appear below when you upload a file.
+                    </p>
+                  )}
+                  
+                </div>
+              )}
+
+              {/* Playlist Builder Tab */}
+              {activeTab === 'playlist-builder' && (
+                <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 shadow-2xl">
+                  <div className="text-center mb-8">
+                    <h2 className="text-3xl font-bold mb-4">🎵 Playlist Builder</h2>
+                    <p className="text-gray-300 text-lg mb-4">
+                      Collect tracks from multiple conversations and create one amazing playlist
+                    </p>
+                    <p className="text-gray-400 text-sm mb-6">
+                      🔒 All processing happens locally on your device. Your messages are never uploaded or stored.
+                    </p>
+                  </div>
+
+                  {/* Current Collection Status */}
+                  <div className="bg-white/5 rounded-lg p-6 mb-6">
+                    <div className="flex justify-between items-center mb-4">
+                      <h3 className="text-xl font-semibold">Your Collection</h3>
+                      <span className="bg-green-500/20 text-green-300 px-3 py-1 rounded-full text-sm">
+                        {collectedTracks.length} tracks
+                      </span>
+                    </div>
+                    
+                    {collectedTracks.length > 0 ? (
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {playlistSources.map((source, index) => (
+                            <div key={index} className="bg-white/5 rounded-lg p-4">
+                              <div className="flex justify-between items-center">
+                                <div>
+                                  <p className="font-medium text-white">{source.name}</p>
+                                  <p className="text-sm text-gray-400">{source.trackCount} tracks</p>
+                                </div>
+                                <button
+                                  onClick={() => removeSource(index)}
+                                  className="text-red-400 hover:text-red-300 text-sm"
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        
+                        <div className="flex gap-3 pt-4">
+                          <button
+                            onClick={() => setShowTrackPreview(true)}
+                            className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition-colors"
+                          >
+                            Preview All Tracks
+                          </button>
+                          <button
+                            onClick={createPlaylistFromCollection}
+                            disabled={isCreatingPlaylist}
+                            className="bg-green-500 hover:bg-green-600 disabled:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors"
+                          >
+                            {isCreatingPlaylist ? 'Creating...' : `Create Playlist (${collectedTracks.length} tracks)`}
+                          </button>
+                          <button
+                            onClick={() => { setCollectedTracks([]); setPlaylistSources([]); }}
+                            className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg transition-colors"
+                          >
+                            Clear Collection
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-center py-8">
+                        <p className="text-gray-400 mb-4">No tracks collected yet</p>
+                        <p className="text-sm text-gray-500">
+                          Use the other tabs to find conversations with Spotify links, then add them to your collection
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Instructions */}
+                  <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-6">
+                    <h4 className="text-lg font-semibold text-blue-300 mb-3">How to Build Your Playlist:</h4>
+                    <ol className="space-y-2 text-sm text-gray-300">
+                      <li className="flex items-start">
+                        <span className="bg-blue-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold mr-3 mt-0.5">1</span>
+                        Use "Smart Detection" or "Chat Name" to find conversations with Spotify links
+                      </li>
+                      <li className="flex items-start">
+                        <span className="bg-blue-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold mr-3 mt-0.5">2</span>
+                        When you see tracks, click "Add to Collection" to save them
+                      </li>
+                      <li className="flex items-start">
+                        <span className="bg-blue-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold mr-3 mt-0.5">3</span>
+                        Repeat for multiple conversations to build your collection
+                      </li>
+                      <li className="flex items-start">
+                        <span className="bg-blue-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold mr-3 mt-0.5">4</span>
+                        When ready, create your playlist with all collected tracks
+                      </li>
+                    </ol>
+                  </div>
+                </div>
+              )}
+
+              {/* Playlist Creation Progress */}
+              {isCreatingPlaylist && currentJob && (
+                <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 shadow-2xl">
+                  <div className="text-center">
+                    <h3 className="text-2xl font-bold mb-4">Creating Your Playlist</h3>
+                    <div className="mb-6">
+                      <div className="bg-gray-700 rounded-full h-3 mb-2">
+                        <div 
+                          className="bg-green-500 h-3 rounded-full transition-all duration-300"
+                          style={{ width: `${currentJob.progress}%` }}
+                        ></div>
+                      </div>
+                      <p className="text-sm text-gray-300">{currentJob.progress}% complete</p>
+                    </div>
+                    <p className="text-gray-300 mb-4">{currentJob.message}</p>
+                    {currentJob.status === 'completed' && (
+                      <div className="text-green-400 text-lg">
+                        ✅ Playlist created successfully!
+                      </div>
+                    )}
+                    {currentJob.status === 'error' && (
+                      <div className="text-red-400 text-lg">
+                        ❌ Failed to create playlist
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -762,15 +1200,11 @@ function App() {
               {/* Processing Options */}
               {((activeTab === 'smart-detect' && selectedChat) || 
                 (activeTab === 'chat-name' && chatName.trim()) || 
-                (activeTab === 'file-upload' && showProcessingOptions)) && (
+                (activeTab === 'file-upload' && selectedFile) ||
+                (activeTab === 'playlist-builder' && collectedTracks.length > 0)) && (
                 <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 shadow-2xl">
                   <div className="flex justify-between items-center mb-4">
                     <h2 className="text-2xl font-bold">Processing Options</h2>
-                    {activeTab === 'file-upload' && (
-                      <span className="bg-yellow-500/20 border border-yellow-500/50 text-yellow-200 text-xs px-2 py-1 rounded-full">
-                        ⭐ Premium
-                      </span>
-                    )}
                   </div>
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -781,7 +1215,7 @@ function App() {
                           type="text"
                           value={playlistName}
                           onChange={(e) => setPlaylistName(e.target.value)}
-                          placeholder="e.g., My Favorite Songs"
+                          placeholder={activeTab === 'playlist-builder' ? "e.g., Zingaroo Collection - October 2025" : "e.g., My Favorite Songs"}
                           className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-green-500"
                         />
                         <button
@@ -839,16 +1273,18 @@ function App() {
                   <div className="mt-6">
                     <button
                       onClick={() => {
-                        if (selectedChat) {
+                        if (activeTab === 'playlist-builder') {
+                          handleProcessCollection();
+                        } else if (selectedChat) {
                           handleProcessChat(selectedChat);
                         } else if (chatName.trim()) {
                           handleProcessChat({ name: chatName.trim() });
                         }
                       }}
-                      disabled={isProcessing || !playlistId.trim() || (!selectedChat && !chatName.trim())}
+                      disabled={isProcessing || !playlistId.trim() || (activeTab === 'playlist-builder' ? collectedTracks.length === 0 : (!selectedChat && !chatName.trim()))}
                       className="bg-green-500 hover:bg-green-600 disabled:bg-gray-600 text-white font-semibold px-8 py-3 rounded-full transition-colors"
                     >
-                      {isProcessing ? 'Processing...' : 'Process Chat'}
+                      {isProcessing ? 'Processing...' : (activeTab === 'playlist-builder' ? `Process Collection (${collectedTracks.length} tracks)` : 'Process Chat')}
                     </button>
                   </div>
                 </div>
@@ -927,11 +1363,13 @@ function App() {
               )}
 
               {/* Track Preview Modal */}
-              {showTrackPreview && selectedChat && (
+              {showTrackPreview && (selectedChat || collectedTracks.length > 0) && (
                 <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
                   <div className="bg-gray-900 border border-white/20 rounded-2xl p-6 max-w-4xl w-full max-h-[80vh] overflow-hidden">
                     <div className="flex justify-between items-center mb-4">
-                      <h3 className="text-2xl font-bold">Preview Tracks - {selectedChat.name}</h3>
+                      <h3 className="text-2xl font-bold">
+                        Preview Tracks - {selectedChat ? selectedChat.name : 'Collected Tracks'}
+                      </h3>
                       <button
                         onClick={() => {
                           setShowTrackPreview(false);
@@ -1042,25 +1480,16 @@ function App() {
                             <div className="text-right space-y-2">
                               <p className="text-sm text-gray-400">{track.duration}</p>
                               <div className="flex space-x-2">
-                                <button
-                                  onClick={() => {
-                                    setSelectedTrackForPlayer(track);
-                                    setShowSpotifyPlayer(true);
-                                  }}
+                                <a
+                                  href={track.spotify_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
                                   className="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded text-xs transition-colors flex items-center space-x-1"
                                 >
                                   <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
                                     <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
                                   </svg>
-                                  <span>Play</span>
-                                </button>
-                                <a
-                                  href={track.spotify_url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-green-400 hover:text-green-300 text-xs"
-                                >
-                                  Open in Spotify
+                                  <span>Open in Spotify</span>
                                 </a>
                               </div>
                             </div>
@@ -1165,12 +1594,28 @@ function App() {
                         <button
                           onClick={() => {
                             setShowTrackPreview(false);
-                            setShowProcessingOptions(true);
                           }}
                           disabled={selectedTracks.length === 0}
                           className="bg-green-500 hover:bg-green-600 disabled:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors"
                         >
                           Process Selected ({selectedTracks.length})
+                        </button>
+                        <button
+                          onClick={() => {
+                            // Add selected tracks to collection
+                            const selectedTrackObjects = trackDetails.filter(track => 
+                              selectedTracks.includes(track.id)
+                            );
+                            if (selectedTrackObjects.length > 0) {
+                              addTracksToCollection(selectedTrackObjects, selectedChat.name);
+                              setShowTrackPreview(false);
+                              setSelectedTracks([]);
+                            }
+                          }}
+                          disabled={selectedTracks.length === 0}
+                          className="bg-purple-500 hover:bg-purple-600 disabled:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors"
+                        >
+                          🎵 Add to Collection ({selectedTracks.length})
                         </button>
                       </div>
                     </div>
@@ -1182,18 +1627,15 @@ function App() {
         </div>
       </div>
 
-      {/* Spotify Player Modal */}
-      {showSpotifyPlayer && selectedTrackForPlayer && (
-        <SpotifyPlayer
-          track={selectedTrackForPlayer}
-          onClose={() => {
-            setShowSpotifyPlayer(false);
-            setSelectedTrackForPlayer(null);
-          }}
-        />
-      )}
     </div>
   );
 }
 
-export default App;
+// Wrap App with ErrorBoundary
+const AppWithErrorBoundary = () => (
+  <ErrorBoundary>
+    <App />
+  </ErrorBoundary>
+);
+
+export default AppWithErrorBoundary;

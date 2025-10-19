@@ -18,6 +18,17 @@ from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 import threading
+
+# Import resilience systems
+try:
+    from api_resilience import (
+        resilient_api_call, check_system_health, 
+        api_adapter, version_manager, degradation_handler
+    )
+    RESILIENCE_AVAILABLE = True
+except ImportError:
+    RESILIENCE_AVAILABLE = False
+    print("Warning: API resilience module not available. Running in basic mode.")
 import logging
 import traceback
 
@@ -27,6 +38,21 @@ try:
     load_dotenv()
 except ImportError:
     print("Warning: python-dotenv not installed. Environment variables must be set manually.")
+
+# Import security and error handling modules
+try:
+    from security_config import (
+        SECURITY_CONFIG, get_secure_session_config, secure_headers,
+        validate_spotify_credentials, log_security_event
+    )
+    from error_handler import (
+        handle_api_error, handle_spotify_error, handle_file_error,
+        safe_api_call, register_error_handlers, log_request_info
+    )
+    SECURITY_AVAILABLE = True
+except ImportError:
+    SECURITY_AVAILABLE = False
+    print("Warning: Security modules not available. Running in basic mode.")
 
 # Configure comprehensive logging
 logging.basicConfig(
@@ -62,18 +88,35 @@ from flask import session, redirect, url_for
 import secrets
 
 app = Flask(__name__)
-CORS(app, supports_credentials=True, origins=['http://localhost:3000', 'http://127.0.0.1:3000'])
 
-# Configure session for OAuth
-app.secret_key = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(32))
+# Apply security configuration
+if SECURITY_AVAILABLE:
+    # Set secure session configuration
+    session_config = get_secure_session_config()
+    for key, value in session_config.items():
+        app.config[key] = value
+
+    # Enable CORS with security settings
+    CORS(app, supports_credentials=True, origins=SECURITY_CONFIG['CORS_ORIGINS'])
+    
+    # Register error handlers
+    register_error_handlers(app)
+    
+    # Validate Spotify credentials
+    try:
+        validate_spotify_credentials()
+        logger.info("✅ Spotify credentials validated")
+    except ValueError as e:
+        logger.error(f"❌ Spotify credentials validation failed: {e}")
+        raise
+else:
+    # Basic CORS for development
+    CORS(app, supports_credentials=True, origins=['http://localhost:3000', 'http://127.0.0.1:3000'])
+    app.secret_key = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(32))
 
 # Configure session settings for better reliability
-app.config['SESSION_COOKIE_SECURE'] = False  # Set to True in production with HTTPS
-app.config['SESSION_COOKIE_HTTPONLY'] = False  # Allow JavaScript access for debugging
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_DOMAIN'] = None  # Allow cookies for both localhost and 127.0.0.1
 app.config['SESSION_COOKIE_PATH'] = '/'  # Ensure cookie is available for all paths
-app.config['PERMANENT_SESSION_LIFETIME'] = 3600  # 1 hour
 
 logger.info("Flask app created successfully")
 logger.info("CORS enabled")  # Enable CORS for development
@@ -698,16 +741,40 @@ def get_stats():
 
 @app.route('/api/health')
 def health_check():
-    """Health check endpoint."""
+    """Health check endpoint with resilience status."""
     logger.info("Health check endpoint called")
     try:
         response = {'status': 'healthy', 'timestamp': datetime.now().isoformat()}
+        
+        # Add resilience status if available
+        if RESILIENCE_AVAILABLE:
+            try:
+                system_health = check_system_health()
+                response['resilience'] = {
+                    'api_status': system_health.get('api_status', 'unknown'),
+                    'compatibility': system_health.get('compatibility', {}),
+                    'degradation_mode': False
+                }
+            except Exception as resilience_error:
+                logger.warning(f"Resilience check failed: {resilience_error}")
+                response['resilience'] = {'error': 'Resilience check unavailable'}
+        else:
+            response['resilience'] = {'status': 'basic_mode'}
+        
         logger.info(f"Health check response: {response}")
-        return jsonify(response)
+
+        json_response = jsonify(response)
+        
+        # Add security headers if available
+        if SECURITY_AVAILABLE:
+            for header, value in secure_headers().items():
+                json_response.headers[header] = value
+
+        return json_response
     except Exception as e:
         logger.error(f"Health check error: {e}")
         logger.error(traceback.format_exc())
-        return jsonify({'error': str(e)}), 500
+        return handle_api_error(e, "Health check failed")
 
 @app.route('/api/track-details', methods=['POST'])
 def get_track_details():
