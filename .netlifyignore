@@ -1,0 +1,16 @@
+# Ignore Python files and backend
+src/
+*.py
+requirements.txt
+server.py
+venv/
+__pycache__/
+*.pyc
+.env
+*.log
+
+# Ignore deployment files
+railway.json
+DEPLOYMENT_*.md
+QUICK_DEPLOY.md
+deploy.sh
