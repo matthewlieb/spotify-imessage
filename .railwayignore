@@ -1,0 +1,22 @@
+# Ignore root Python package files
+pyproject.toml
+src/
+*.py
+!web-react/*.py
+!web-react/server.py
+!web-react/requirements.txt
+
+# Ignore frontend files
+web-react/src/
+web-react/public/
+web-react/build/
+web-react/node_modules/
+web-react/package.json
+web-react/package-lock.json
+
+# Ignore deployment files
+DEPLOYMENT_*.md
+QUICK_DEPLOY.md
+deploy.sh
+.netlify.toml
+.netlifyignore

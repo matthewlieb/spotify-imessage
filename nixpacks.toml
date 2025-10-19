@@ -1,0 +1,11 @@
+[phases.setup]
+nixPkgs = ["python3", "gcc"]
+
+[phases.install]
+cmds = ["cd web-react && pip install -r requirements.txt"]
+
+[phases.build]
+cmds = ["echo 'Build phase complete'"]
+
+[start]
+cmd = "cd web-react && python server.py"

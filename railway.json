@@ -1,7 +1,8 @@
 {
   "build": {
     "builder": "NIXPACKS",
-    "buildCommand": "cd web-react && pip install -r requirements.txt"
+    "buildCommand": "cd web-react && pip install -r requirements.txt",
+    "watchPaths": ["web-react/**"]
   },
   "deploy": {
     "startCommand": "cd web-react && python server.py",
