@@ -419,11 +419,11 @@ def run_spotify_message_command(command_type, options, chat_name=None):
     try:
         # Build command based on type
         if command_type == 'imessage':
-            cmd = ['spotify_message', 'imessage', '--chat', chat_name]
+            cmd = ['python', '-m', 'src.spotify_imessage.cli', 'imessage', '--chat', chat_name]
         elif command_type == 'android':
-            cmd = ['spotify_message', 'android', '--file', options.get('file_path', '')]
+            cmd = ['python', '-m', 'src.spotify_imessage.cli', 'android', '--file', options.get('file_path', '')]
         elif command_type == 'file':
-            cmd = ['spotify_message', 'file', '--input', options.get('file_path', '')]
+            cmd = ['python', '-m', 'src.spotify_imessage.cli', 'file', '--input', options.get('file_path', '')]
         else:
             return {'error': f'Unknown command type: {command_type}'}
         

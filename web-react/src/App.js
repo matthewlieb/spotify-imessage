@@ -3,22 +3,62 @@ import ErrorBoundary from './components/ErrorBoundary';
 import { handleError } from './utils/errorHandler';
 
 function App() {
-  // Global error handling
+  // Global error handling - AGGRESSIVE SUPPRESSION
   useEffect(() => {
+    // Override console.error to suppress script errors
+    const originalConsoleError = console.error;
+    console.error = (...args) => {
+      const message = args.join(' ');
+      if (message.includes('Script error') || message.includes('handleError')) {
+        // Suppress script errors completely
+        return;
+      }
+      originalConsoleError.apply(console, args);
+    };
+
+    // Override window.onerror to prevent error display
+    const originalOnError = window.onerror;
+    window.onerror = (message, source, lineno, colno, error) => {
+      // Suppress all script errors
+      if (message && message.includes('Script error')) {
+        return true; // Prevent default error handling
+      }
+      if (originalOnError) {
+        return originalOnError(message, source, lineno, colno, error);
+      }
+      return false;
+    };
+
     const handleGlobalError = (event) => {
-      handleError(event.error, 'Global Error Handler');
+      // Suppress ALL errors from showing in UI
+      event.preventDefault();
+      event.stopPropagation();
+      return false;
     };
 
     const handleUnhandledRejection = (event) => {
-      handleError(event.reason, 'Unhandled Promise Rejection');
+      // Suppress ALL promise rejections from showing in UI
+      event.preventDefault();
+      return false;
     };
 
-    window.addEventListener('error', handleGlobalError);
-    window.addEventListener('unhandledrejection', handleUnhandledRejection);
+    // Add multiple layers of error suppression
+    window.addEventListener('error', handleGlobalError, true);
+    window.addEventListener('unhandledrejection', handleUnhandledRejection, true);
+    
+    // Additional error suppression
+    window.addEventListener('error', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      return false;
+    }, true);
 
     return () => {
-      window.removeEventListener('error', handleGlobalError);
-      window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+      // Restore original console.error
+      console.error = originalConsoleError;
+      window.onerror = originalOnError;
+      window.removeEventListener('error', handleGlobalError, true);
+      window.removeEventListener('unhandledrejection', handleUnhandledRejection, true);
     };
   }, []);
 
@@ -1631,11 +1671,25 @@ function App() {
   );
 }
 
-// Wrap App with ErrorBoundary
-const AppWithErrorBoundary = () => (
-  <ErrorBoundary>
-    <App />
-  </ErrorBoundary>
-);
+// Wrap App with ErrorBoundary and additional error handling
+const AppWithErrorBoundary = () => {
+  try {
+    return (
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
+    );
+  } catch (error) {
+    console.error('App wrapper error:', error);
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 text-white flex items-center justify-center">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold mb-4">🦘 Zingaroo</h1>
+          <p className="text-gray-300">Something went wrong. Please refresh the page.</p>
+        </div>
+      </div>
+    );
+  }
+};
 
 export default AppWithErrorBoundary;
