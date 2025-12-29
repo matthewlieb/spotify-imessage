@@ -115,15 +115,13 @@ else:
     CORS(app, supports_credentials=True, origins=['http://localhost:3000', 'http://127.0.0.1:3000'])
     app.secret_key = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(32))
 
-# Configure session settings for better reliability
+# Configure session settings for better reliability (Spotify OAuth best practices)
 app.config['SESSION_COOKIE_DOMAIN'] = None  # Allow cookies for both localhost and 127.0.0.1
 app.config['SESSION_COOKIE_PATH'] = '/'  # Ensure cookie is available for all paths
-app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_HTTPONLY'] = True  # Security: prevent XSS
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # Allow cross-site cookies for OAuth redirect
-app.config['PERMANENT_SESSION_LIFETIME'] = 3600 * 24  # 24 hours
-app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # Allow cross-site cookies for OAuth redirect
-app.config['PERMANENT_SESSION_LIFETIME'] = 3600 * 24  # 24 hours
+app.config['SESSION_COOKIE_SECURE'] = False  # Set to True in production with HTTPS
+app.config['PERMANENT_SESSION_LIFETIME'] = 3600 * 24  # 24 hours (Spotify tokens last 1 hour, refresh when needed)
 
 logger.info("Flask app created successfully")
 logger.info("CORS enabled")  # Enable CORS for development
@@ -1250,22 +1248,28 @@ def spotify_callback():
         if not code:
             return jsonify({'error': 'Authorization code not provided'}), 400
         
-        # Exchange code for token
+        # Exchange authorization code for access token (Spotify best practice: do this immediately)
+        # Reference: https://developer.spotify.com/documentation/web-api/concepts/authorization
         oauth = get_spotify_oauth()
         if not oauth:
             return jsonify({'error': 'Spotify OAuth not available'}), 500
         
         token_info = oauth.get_access_token(code)
         
-        # Store token in session
+        if not token_info or 'access_token' not in token_info:
+            logger.error("Failed to get access token from Spotify")
+            return redirect('http://localhost:3000?spotify_auth=error')
+        
+        # Get user info immediately (validate token works)
+        try:
+            sp = spotipy.Spotify(auth=token_info['access_token'])
+            user = sp.current_user()
+        except Exception as e:
+            logger.error(f"Failed to get user info: {e}")
+            return redirect('http://localhost:3000?spotify_auth=error')
+        
+        # Store token and user in session (session is source of truth)
         session['spotify_token'] = token_info
-        logger.info(f"Stored spotify_token in session: {bool(session.get('spotify_token'))}")
-        
-        # Get user info
-        sp = spotipy.Spotify(auth=token_info['access_token'])
-        user = sp.current_user()
-        
-        # Store user info in session
         session['spotify_user'] = {
             'id': user['id'],
             'display_name': user['display_name'],
@@ -1273,35 +1277,28 @@ def spotify_callback():
             'country': user.get('country', ''),
             'product': user.get('product', '')
         }
-        logger.info(f"Stored spotify_user in session: {bool(session.get('spotify_user'))}")
-        logger.info(f"Session keys after storing: {list(session.keys())}")
         
-        # Generate a temporary auth token
-        auth_token = secrets.token_urlsafe(32)
-        
-        # Store auth data in temporary storage
-        temp_auth_tokens[auth_token] = {
-            'spotify_token': token_info,
-            'spotify_user': {
-                'id': user['id'],
-                'display_name': user['display_name'],
-                'email': user.get('email', ''),
-                'country': user.get('country', ''),
-                'product': user.get('product', '')
-            },
-            'timestamp': datetime.now()
-        }
-        
-        # Now clear the oauth_state from session
+        # Clear oauth_state from session
         if 'oauth_state' in session:
             del session['oauth_state']
         
-        # Force session to be saved
+        # Mark session as permanent and modified
         session.permanent = True
         session.modified = True
         
-        # Redirect to frontend with success and auth token
-        logger.info("About to redirect to frontend with auth token")
+        logger.info(f"✅ OAuth callback successful - stored token and user in session")
+        logger.info(f"Session keys: {list(session.keys())}")
+        
+        # Generate temporary token for frontend (optional - session already has everything)
+        # This allows frontend to verify, but session is the real source of truth
+        auth_token = secrets.token_urlsafe(32)
+        temp_auth_tokens[auth_token] = {
+            'spotify_token': token_info,
+            'spotify_user': session['spotify_user'],
+            'timestamp': datetime.now()
+        }
+        
+        # Redirect to frontend - session is already set, frontend just needs to check status
         return redirect(f'http://localhost:3000?spotify_auth=success&token={auth_token}')
         
     except Exception as e:
@@ -1310,42 +1307,77 @@ def spotify_callback():
 
 @app.route('/api/auth/exchange-token', methods=['POST'])
 def exchange_auth_token():
-    """Exchange temporary auth token for session data."""
+    """
+    Exchange temporary auth token for session data.
+    
+    This endpoint is idempotent - it can be called multiple times safely.
+    Based on Spotify OAuth 2.0 best practices:
+    - Authorization codes should be exchanged promptly
+    - Session is the source of truth for authentication
+    - Token exchange is only needed if session doesn't have token
+    """
     try:
         data = request.get_json()
         auth_token = data.get('token')
         
-        logger.info(f"Exchange token request - token: {auth_token[:10] if auth_token else 'None'}...")
-        logger.info(f"Available temp tokens: {list(temp_auth_tokens.keys())[:3]}")
+        # CRITICAL: Check session FIRST (idempotent - handles React StrictMode double calls)
+        if 'spotify_token' in session and 'spotify_user' in session:
+            logger.info("Session already authenticated - returning existing user (idempotent)")
+            return jsonify({
+                'success': True,
+                'message': 'Authentication successful (already authenticated)',
+                'user': session['spotify_user']
+            })
         
         if not auth_token:
             logger.error("No token provided in exchange request")
             return jsonify({'error': 'No token provided'}), 400
         
-        # Check if token exists and is not expired (1 hour)
+        # Check if token exists in temporary storage
         if auth_token not in temp_auth_tokens:
-            logger.error(f"Token not found in temp_auth_tokens. Available: {len(temp_auth_tokens)} tokens")
+            logger.warning(f"Token not found in temp_auth_tokens. Available: {len(temp_auth_tokens)} tokens")
+            # Final check - session might have been set by another request
+            if 'spotify_token' in session and 'spotify_user' in session:
+                logger.info("Found token in session after temp token check")
+                return jsonify({
+                    'success': True,
+                    'message': 'Authentication successful (session found)',
+                    'user': session['spotify_user']
+                })
             return jsonify({'error': 'Invalid or expired token'}), 400
         
         auth_data = temp_auth_tokens[auth_token]
         
-        # Check if token is expired (1 hour)
+        # Check if token is expired (5 minutes - Spotify best practice: exchange promptly)
         time_diff = (datetime.now() - auth_data['timestamp']).total_seconds()
-        if time_diff > 3600:
+        if time_diff > 300:  # 5 minutes
             logger.warning(f"Token expired: {time_diff} seconds old")
+            # Check session one more time before failing
+            if 'spotify_token' in session and 'spotify_user' in session:
+                logger.info("Session has token despite expired temp token")
+                return jsonify({
+                    'success': True,
+                    'message': 'Authentication successful (session active)',
+                    'user': session['spotify_user']
+                })
             del temp_auth_tokens[auth_token]
-            return jsonify({'error': 'Token expired'}), 400
+            return jsonify({'error': 'Token expired. Please sign in again.'}), 400
         
-        # Store auth data in session
+        # Store auth data in session (session is source of truth)
         session['spotify_token'] = auth_data['spotify_token']
         session['spotify_user'] = auth_data['spotify_user']
         session.permanent = True
         session.modified = True
         
-        # Remove the temporary token
-        del temp_auth_tokens[auth_token]
+        # Remove temporary token AFTER successful session storage
+        # But only if we successfully stored it
+        try:
+            del temp_auth_tokens[auth_token]
+        except KeyError:
+            # Token already deleted (race condition), that's okay
+            pass
         
-        logger.info(f"Exchanged token for session data: {list(session.keys())}")
+        logger.info(f"Successfully exchanged token - session keys: {list(session.keys())}")
         logger.info(f"Token stored - has access_token: {'access_token' in session['spotify_token']}")
         
         return jsonify({
@@ -1358,6 +1390,14 @@ def exchange_auth_token():
         logger.error(f"Error exchanging auth token: {e}")
         import traceback
         logger.error(traceback.format_exc())
+        # Check session as fallback
+        if 'spotify_token' in session and 'spotify_user' in session:
+            logger.info("Returning session data despite error")
+            return jsonify({
+                'success': True,
+                'message': 'Authentication successful (using session)',
+                'user': session['spotify_user']
+            })
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/auth/status')

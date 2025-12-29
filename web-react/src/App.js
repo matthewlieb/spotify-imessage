@@ -8,7 +8,7 @@
  * 4. Name playlist and click create -> creates playlist with selected tracks
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import './index.css';
 
 const API_BASE = 'http://localhost:8004/api';
@@ -45,48 +45,69 @@ function App() {
       .catch(() => setLoading(false));
   }, []);
 
-  // Handle OAuth callback
+  // Handle OAuth callback - backend stores token in session, we just verify
+  // Using useRef to prevent double execution in React StrictMode
+  const callbackHandled = useRef(false);
+  
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const token = params.get('token');
-    if (params.get('spotify_auth') === 'success' && token) {
-      fetch(`${API_BASE}/auth/exchange-token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ token })
-      })
-      .then(r => {
-        if (!r.ok) {
-          return r.json().then(err => {
-            throw new Error(err.error || 'Token exchange failed');
-          });
-        }
-        return r.json();
-      })
-      .then(d => {
-        if (d.success) {
-          setAuth(true);
-          setUser(d.user);
-          setError(''); // Clear any previous errors
-          window.history.replaceState({}, '', '/');
-          // Refresh auth status to ensure session is set
-          fetch(`${API_BASE}/auth/status`, { credentials: 'include' })
-            .then(r => r.json())
-            .then(status => {
-              if (status.authenticated) {
-                setAuth(true);
-                setUser(status.user);
-              }
-            });
-        } else {
+    const authStatus = params.get('spotify_auth');
+    
+    // Prevent double execution (React StrictMode in development)
+    if (callbackHandled.current) return;
+    
+    if (authStatus === 'success') {
+      callbackHandled.current = true;
+      
+      // Backend already stored token in session during callback
+      // Just check auth status - session is source of truth
+      fetch(`${API_BASE}/auth/status`, { credentials: 'include' })
+        .then(r => r.json())
+        .then(status => {
+          if (status.authenticated) {
+            setAuth(true);
+            setUser(status.user);
+            setError('');
+            window.history.replaceState({}, '', '/');
+          } else {
+            // Fallback: try token exchange if session check failed
+            const token = params.get('token');
+            if (token) {
+              fetch(`${API_BASE}/auth/exchange-token`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ token })
+              })
+              .then(r => r.json())
+              .then(d => {
+                if (d.success) {
+                  setAuth(true);
+                  setUser(d.user);
+                  setError('');
+                } else {
+                  setError('Authentication failed. Please try logging in again.');
+                }
+                window.history.replaceState({}, '', '/');
+              })
+              .catch(() => {
+                setError('Authentication failed. Please try logging in again.');
+                window.history.replaceState({}, '', '/');
+              });
+            } else {
+              setError('Authentication failed. Please try logging in again.');
+              window.history.replaceState({}, '', '/');
+            }
+          }
+        })
+        .catch(() => {
           setError('Authentication failed. Please try logging in again.');
-        }
-      })
-      .catch(error => {
-        console.error('Token exchange error:', error);
-        setError(`Authentication error: ${error.message}. Please try logging in again.`);
-      });
+          window.history.replaceState({}, '', '/');
+        });
+    } else if (authStatus === 'error') {
+      callbackHandled.current = true;
+      setError('Spotify authentication failed. Please try again.');
+      window.history.replaceState({}, '', '/');
     }
   }, []);
 
