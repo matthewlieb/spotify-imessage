@@ -6,6 +6,10 @@
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/Status-Production%20Ready-brightgreen.svg)](https://github.com/matthewlieb/spotify-imessage)
 
+> **✅ WORKING CODE** - This is a fully functional version tested and working as of December 28, 2024.  
+> **Repository**: https://github.com/matthewlieb/spotify-imessage  
+> **Setup**: See [Quick Start](#-quick-start) below for single-command launch.
+
 ## 🎯 **What It Does**
 
 Transform your message conversations into Spotify playlists! This tool automatically:
