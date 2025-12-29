@@ -1,0 +1,22 @@
+# Zingaroo Environment Configuration
+# Spotify OAuth Configuration (REAL KEYS)
+SPOTIFY_CLIENT_ID=ee9c48a1cfe44fe392fd3ff39d95b3a6
+SPOTIFY_CLIENT_SECRET=47750a0f67494b30a59e739bc8d9e535
+SPOTIFY_REDIRECT_URI=http://127.0.0.1:8004/callback
+
+# Flask Configuration
+FLASK_SECRET_KEY=94a8ef9b91d49569c0152be154ae38f2383c13e6edeea02e55a7331e73a466c1
+FLASK_ENV=development
+
+# API Configuration
+REACT_APP_API_URL=http://localhost:8004
+REACT_APP_API_TIMEOUT=30000
+
+# Feature Flags
+REACT_APP_ENABLE_SMART_DETECTION=true
+REACT_APP_ENABLE_CHAT_NAME=true
+REACT_APP_ENABLE_FILE_UPLOAD=true
+
+# Development Settings
+REACT_APP_DEBUG=false
+REACT_APP_LOG_LEVEL=info

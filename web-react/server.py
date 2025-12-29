@@ -12,6 +12,7 @@ import tempfile
 import json
 import sqlite3
 import shutil
+import re
 from datetime import datetime
 from pathlib import Path
 from flask import Flask, request, jsonify, send_file, send_from_directory
@@ -244,6 +245,27 @@ def get_spotify_oauth():
         scope=SPOTIFY_SCOPE
     )
 
+# Regex for Spotify IDs
+SPOTIFY_ID_RE = re.compile(r"[A-Za-z0-9]{22}")
+
+def _validate_playlist_id(playlist_id: str) -> None:
+    """Validate Spotify playlist ID format."""
+    if not playlist_id or len(playlist_id) != 22 or not SPOTIFY_ID_RE.fullmatch(playlist_id):
+        raise ValueError(f"Invalid playlist ID: {playlist_id}. Expected 22-character alphanumeric string.")
+
+def _existing_track_ids(sp, playlist_id: str) -> set:
+    """Get set of existing track IDs in a playlist."""
+    try:
+        existing = set()
+        results = sp.playlist_items(playlist_id, fields='items(track(id))')
+        for item in results.get('items', []):
+            if item.get('track') and item['track'].get('id'):
+                existing.add(item['track']['id'])
+        return existing
+    except Exception as e:
+        logger.error(f"Error fetching existing tracks: {e}")
+        return set()
+
 def search_playlist_by_name(playlist_name):
     """Search for a playlist by name and return its ID."""
     sp = get_spotify_client()
@@ -417,13 +439,13 @@ def scan_imessage_chats():
 def run_spotify_message_command(command_type, options, chat_name=None):
     """Run spotify-message command and capture output."""
     try:
-        # Build command based on type
+        # Build command based on type - use the installed CLI
         if command_type == 'imessage':
-            cmd = ['python', '-m', 'src.spotify_imessage.cli', 'imessage', '--chat', chat_name]
+            cmd = ['spotify-imessage', 'imessage', '--chat', chat_name]
         elif command_type == 'android':
-            cmd = ['python', '-m', 'src.spotify_imessage.cli', 'android', '--file', options.get('file_path', '')]
+            cmd = ['spotify-imessage', 'android-cmd', '--file', options.get('file_path', '')]
         elif command_type == 'file':
-            cmd = ['python', '-m', 'src.spotify_imessage.cli', 'file', '--input', options.get('file_path', '')]
+            cmd = ['spotify-imessage', 'file', '--file', options.get('file_path', '')]
         else:
             return {'error': f'Unknown command type: {command_type}'}
         
@@ -561,6 +583,72 @@ def create_playlist():
                 'message': 'Failed to create playlist'
             })
     except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/playlist/add-tracks', methods=['POST'])
+def add_tracks_to_playlist():
+    """Add specific track IDs to a playlist using Spotify API directly."""
+    try:
+        data = request.get_json()
+        playlist_id = data.get('playlist_id')
+        track_ids = data.get('track_ids', [])
+        
+        if not playlist_id:
+            return jsonify({'error': 'Playlist ID is required'}), 400
+        
+        if not track_ids or len(track_ids) == 0:
+            return jsonify({'error': 'At least one track ID is required'}), 400
+        
+        # Validate playlist ID format
+        _validate_playlist_id(playlist_id)
+        
+        # Get Spotify client
+        sp = get_spotify_client()
+        if not sp:
+            return jsonify({'error': 'Spotify authentication required'}), 401
+        
+        # Validate track IDs
+        valid_track_ids = []
+        for tid in track_ids:
+            if SPOTIFY_ID_RE.fullmatch(tid):
+                valid_track_ids.append(tid)
+        
+        if not valid_track_ids:
+            return jsonify({'error': 'No valid track IDs provided'}), 400
+        
+        # Check for existing tracks (deduplication)
+        existing = _existing_track_ids(sp, playlist_id)
+        new_tracks = [tid for tid in valid_track_ids if tid not in existing]
+        
+        if not new_tracks:
+            return jsonify({
+                'success': True,
+                'tracks_added': 0,
+                'message': 'All selected tracks are already in the playlist'
+            })
+        
+        # Convert to URIs and add in batches of 100
+        uris = [f"spotify:track:{tid}" for tid in new_tracks]
+        tracks_added = 0
+        
+        for i in range(0, len(uris), 100):
+            batch = uris[i:i+100]
+            try:
+                sp.playlist_add_items(playlist_id, batch)
+                tracks_added += len(batch)
+            except Exception as e:
+                logger.error(f"Error adding batch {i//100 + 1}: {e}")
+                # Continue with next batch
+        
+        return jsonify({
+            'success': True,
+            'tracks_added': tracks_added,
+            'message': f'Successfully added {tracks_added} track(s) to playlist'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error adding tracks to playlist: {e}")
         return jsonify({'error': str(e)}), 500
 
 
