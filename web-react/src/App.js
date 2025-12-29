@@ -4,8 +4,8 @@
  * Flow:
  * 1. Sign in with Spotify (SSO)
  * 2. Scan your iMessage chats
- * 3. View songs found in each chat (with selection)
- * 4. Create playlist and add selected tracks
+ * 3. Select a chat -> dropdown shows all tracks
+ * 4. Name playlist and click create -> creates playlist with selected tracks
  */
 
 import React, { useState, useEffect } from 'react';
@@ -30,9 +30,8 @@ function App() {
   // Playlist creation
   const [playlistName, setPlaylistName] = useState('');
   const [creatingPlaylist, setCreatingPlaylist] = useState(false);
-  const [playlistId, setPlaylistId] = useState(null);
-  const [addingTracks, setAddingTracks] = useState(false);
   const [success, setSuccess] = useState('');
+  const [error, setError] = useState('');
 
   // Check authentication
   useEffect(() => {
@@ -57,13 +56,36 @@ function App() {
         credentials: 'include',
         body: JSON.stringify({ token })
       })
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) {
+          return r.json().then(err => {
+            throw new Error(err.error || 'Token exchange failed');
+          });
+        }
+        return r.json();
+      })
       .then(d => {
         if (d.success) {
           setAuth(true);
           setUser(d.user);
+          setError(''); // Clear any previous errors
           window.history.replaceState({}, '', '/');
+          // Refresh auth status to ensure session is set
+          fetch(`${API_BASE}/auth/status`, { credentials: 'include' })
+            .then(r => r.json())
+            .then(status => {
+              if (status.authenticated) {
+                setAuth(true);
+                setUser(status.user);
+              }
+            });
+        } else {
+          setError('Authentication failed. Please try logging in again.');
         }
+      })
+      .catch(error => {
+        console.error('Token exchange error:', error);
+        setError(`Authentication error: ${error.message}. Please try logging in again.`);
       });
     }
   }, []);
@@ -82,6 +104,7 @@ function App() {
     setSelectedChat(null);
     setTracks([]);
     setSelectedTracks(new Set());
+    setError('');
     
     try {
       const response = await fetch(`${API_BASE}/scan-imessage`, {
@@ -91,14 +114,14 @@ function App() {
       const data = await response.json();
       
       if (data.error) {
-        alert(`Scan failed: ${data.error}`);
+        setError(`Scan failed: ${data.error}`);
       } else if (data.chats && data.chats.length > 0) {
         setChats(data.chats);
       } else {
-        alert('No chats with Spotify tracks found');
+        setError('No chats with Spotify tracks found');
       }
     } catch (error) {
-      alert(`Error: ${error.message}`);
+      setError(`Error: ${error.message}`);
     } finally {
       setScanning(false);
     }
@@ -109,6 +132,8 @@ function App() {
     setLoadingTracks(true);
     setTracks([]);
     setSelectedTracks(new Set());
+    setError('');
+    setSuccess('');
     
     try {
       const response = await fetch(`${API_BASE}/track-details`, {
@@ -124,10 +149,15 @@ function App() {
         // Select all tracks by default
         setSelectedTracks(new Set(data.tracks.map(t => t.id)));
       } else {
-        alert(`Failed to load tracks: ${data.error || 'Unknown error'}`);
+        // If auth error, suggest re-login
+        if (data.requires_auth || (data.error && data.error.includes('authentication'))) {
+          setError('Spotify authentication required. Please log out and sign in again.');
+        } else {
+          setError(`Failed to load tracks: ${data.error || 'Unknown error'}`);
+        }
       }
     } catch (error) {
-      alert(`Error: ${error.message}`);
+      setError(`Error: ${error.message}`);
     } finally {
       setLoadingTracks(false);
     }
@@ -151,16 +181,24 @@ function App() {
     setSelectedTracks(new Set());
   };
 
-  const createPlaylist = async () => {
+  const createPlaylistWithTracks = async () => {
     if (!playlistName.trim()) {
-      alert('Please enter a playlist name');
+      setError('Please enter a playlist name');
+      return;
+    }
+    
+    if (selectedTracks.size === 0) {
+      setError('Please select at least one track');
       return;
     }
     
     setCreatingPlaylist(true);
+    setError('');
+    setSuccess('');
     
     try {
-      const response = await fetch(`${API_BASE}/playlist/create`, {
+      // Step 1: Create playlist
+      const createResponse = await fetch(`${API_BASE}/playlist/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -169,39 +207,19 @@ function App() {
           description: `Tracks from ${selectedChat || 'messages'}`
         })
       });
-      const data = await response.json();
+      const createData = await createResponse.json();
       
-      if (data.success) {
-        setPlaylistId(data.playlist.id);
-        setSuccess(`✅ Created playlist: ${data.playlist.name}`);
-      } else {
-        alert(`Failed to create playlist: ${data.message || 'Unknown error'}`);
+      if (!createData.success || !createData.playlist) {
+        setError(`Failed to create playlist: ${createData.message || 'Unknown error'}`);
+        setCreatingPlaylist(false);
+        return;
       }
-    } catch (error) {
-      alert(`Error: ${error.message}`);
-    } finally {
-      setCreatingPlaylist(false);
-    }
-  };
-
-  const addTracksToPlaylist = async () => {
-    if (!playlistId) {
-      alert('Please create a playlist first');
-      return;
-    }
-    
-    if (selectedTracks.size === 0) {
-      alert('Please select at least one track');
-      return;
-    }
-    
-    setAddingTracks(true);
-    setSuccess('');
-    
-    try {
-      // Use the new endpoint to add specific tracks
+      
+      const playlistId = createData.playlist.id;
+      
+      // Step 2: Add selected tracks
       const trackIds = Array.from(selectedTracks);
-      const response = await fetch(`${API_BASE}/playlist/add-tracks`, {
+      const addResponse = await fetch(`${API_BASE}/playlist/add-tracks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -211,18 +229,20 @@ function App() {
         })
       });
       
-      const data = await response.json();
+      const addData = await addResponse.json();
       
-      if (data.success) {
-        setAddingTracks(false);
-        setSuccess(`✅ Successfully added ${data.tracks_added || selectedTracks.size} track${selectedTracks.size !== 1 ? 's' : ''} to playlist!`);
+      if (addData.success) {
+        setSuccess(`✅ Created playlist "${playlistName}" and added ${addData.tracks_added || selectedTracks.size} track${selectedTracks.size !== 1 ? 's' : ''}!`);
+        // Reset form
+        setPlaylistName('');
+        setSelectedTracks(new Set());
       } else {
-        setAddingTracks(false);
-        alert(`Error: ${data.error || 'Failed to add tracks'}`);
+        setError(`Playlist created but failed to add tracks: ${addData.error || 'Unknown error'}`);
       }
     } catch (error) {
-      setAddingTracks(false);
-      alert(`Error: ${error.message}`);
+      setError(`Error: ${error.message}`);
+    } finally {
+      setCreatingPlaylist(false);
     }
   };
 
@@ -292,6 +312,12 @@ function App() {
           </div>
         )}
 
+        {error && (
+          <div className="mb-6 p-4 bg-red-500/20 border border-red-500/50 rounded-xl text-red-300">
+            {error}
+          </div>
+        )}
+
         {/* Step 1: Scan Chats */}
         <div className="glass-card p-6 mb-6">
           <div className="flex items-center justify-between mb-4">
@@ -316,40 +342,40 @@ function App() {
           </div>
 
           {chats.length > 0 && (
-            <div className="mt-4 space-y-2 max-h-64 overflow-y-auto">
-              {chats.map((chat, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => loadTracks(chat.name)}
-                  className={`w-full text-left p-4 rounded-lg border transition-all ${
-                    selectedChat === chat.name
-                      ? 'bg-spotify-500/20 border-spotify-500/50'
-                      : 'bg-white/5 border-white/10 hover:bg-white/10'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-medium">{chat.name}</p>
-                      <p className="text-sm text-gray-400 mt-1">
-                        {chat.trackCount} track{chat.trackCount !== 1 ? 's' : ''} • {chat.lastActivity}
-                      </p>
-                    </div>
-                    {selectedChat === chat.name && loadingTracks && (
-                      <div className="animate-spin">⏳</div>
-                    )}
-                  </div>
-                </button>
-              ))}
+            <div className="mt-4">
+              <label className="block text-sm font-medium mb-2 text-gray-300">
+                2. Select a Chat
+              </label>
+              <select
+                value={selectedChat || ''}
+                onChange={(e) => {
+                  if (e.target.value) {
+                    loadTracks(e.target.value);
+                  } else {
+                    setSelectedChat(null);
+                    setTracks([]);
+                    setSelectedTracks(new Set());
+                  }
+                }}
+                className="input-field w-full"
+              >
+                <option value="">-- Select a chat --</option>
+                {chats.map((chat, idx) => (
+                  <option key={idx} value={chat.name}>
+                    {chat.name} ({chat.trackCount} tracks)
+                  </option>
+                ))}
+              </select>
             </div>
           )}
         </div>
 
-        {/* Step 2: View & Select Tracks */}
+        {/* Step 2: View & Select Tracks (Dropdown) */}
         {tracks.length > 0 && (
           <div className="glass-card p-6 mb-6">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h2 className="text-2xl font-semibold mb-1">2. Select Tracks</h2>
+                <h2 className="text-2xl font-semibold mb-1">3. Select Tracks</h2>
                 <p className="text-sm text-gray-400">
                   {selectedTracks.size} of {tracks.length} track{tracks.length !== 1 ? 's' : ''} selected
                 </p>
@@ -406,57 +432,47 @@ function App() {
           </div>
         )}
 
-        {/* Step 3: Create Playlist & Add Tracks */}
+        {/* Step 3: Create Playlist with Selected Tracks */}
         {tracks.length > 0 && (
           <div className="glass-card p-6">
-            <h2 className="text-2xl font-semibold mb-4">3. Create Playlist & Add Selected Tracks</h2>
+            <h2 className="text-2xl font-semibold mb-4">4. Create Playlist</h2>
             
-            {!playlistId ? (
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium mb-2 text-gray-300">
-                    Playlist Name
-                  </label>
-                  <input
-                    type="text"
-                    value={playlistName}
-                    onChange={(e) => setPlaylistName(e.target.value)}
-                    placeholder="My Awesome Playlist"
-                    className="input-field w-full"
-                    onKeyPress={(e) => e.key === 'Enter' && createPlaylist()}
-                  />
-                </div>
-                <button
-                  onClick={createPlaylist}
-                  disabled={creatingPlaylist || !playlistName.trim()}
-                  className="btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {creatingPlaylist ? 'Creating...' : '✨ Create Playlist'}
-                </button>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-2 text-gray-300">
+                  Playlist Name
+                </label>
+                <input
+                  type="text"
+                  value={playlistName}
+                  onChange={(e) => setPlaylistName(e.target.value)}
+                  placeholder="My Awesome Playlist"
+                  className="input-field w-full"
+                  onKeyPress={(e) => e.key === 'Enter' && createPlaylistWithTracks()}
+                />
               </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="p-4 bg-green-500/20 border border-green-500/50 rounded-lg">
-                  <p className="text-green-300">
-                    ✅ Playlist "{playlistName}" created!
-                  </p>
-                </div>
-                <button
-                  onClick={addTracksToPlaylist}
-                  disabled={addingTracks || selectedTracks.size === 0}
-                  className="btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {addingTracks ? (
-                    <>
-                      <span className="animate-spin inline-block mr-2">⏳</span>
-                      Adding {selectedTracks.size} tracks...
-                    </>
-                  ) : (
-                    `➕ Add ${selectedTracks.size} Selected Track${selectedTracks.size !== 1 ? 's' : ''} to Playlist`
-                  )}
-                </button>
-              </div>
-            )}
+              <button
+                onClick={createPlaylistWithTracks}
+                disabled={creatingPlaylist || !playlistName.trim() || selectedTracks.size === 0}
+                className="btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {creatingPlaylist ? (
+                  <>
+                    <span className="animate-spin inline-block mr-2">⏳</span>
+                    Creating playlist and adding {selectedTracks.size} tracks...
+                  </>
+                ) : (
+                  `✨ Create Playlist with ${selectedTracks.size} Selected Track${selectedTracks.size !== 1 ? 's' : ''}`
+                )}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {loadingTracks && (
+          <div className="glass-card p-6 text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-spotify-500 mx-auto"></div>
+            <p className="mt-4 text-gray-400">Loading tracks...</p>
           </div>
         )}
       </div>
