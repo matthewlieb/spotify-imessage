@@ -1,11 +1,8 @@
-[phases.setup]
-nixPkgs = ["python3", "gcc"]
+# Railway/Nixpacks: backend runs from web-react (Flask server.py)
+# Use python3 -m pip because "pip" may not be on PATH in the build image
 
 [phases.install]
-cmds = ["cd web-react && pip install -r requirements.txt"]
-
-[phases.build]
-cmds = ["echo 'Build phase complete'"]
+cmds = ["cd web-react && python3 -m pip install -r requirements.txt"]
 
 [start]
-cmd = "cd web-react && python server.py"
+cmd = "cd web-react && python3 server.py"
