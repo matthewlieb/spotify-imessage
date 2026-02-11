@@ -1,0 +1,8 @@
+include README.md
+include LICENSE
+include pyproject.toml
+include pytest.ini
+include TEST_SUITE.md
+recursive-include tests *.py
+recursive-exclude * __pycache__
+recursive-exclude * *.py[co]

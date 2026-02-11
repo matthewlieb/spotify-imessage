@@ -1,6 +1,6 @@
 [build]
   base = "web-react"
-  publish = "web-react/build"
+  publish = "build"
   command = "npm run build"
 
 [build.environment]

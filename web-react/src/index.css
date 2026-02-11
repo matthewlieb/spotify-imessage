@@ -47,25 +47,3 @@
     @apply h-full spotify-gradient transition-all duration-300 ease-out;
   }
 }
-
-/* AGGRESSIVE ERROR SUPPRESSION */
-@layer utilities {
-  /* Hide React error overlays */
-  [data-react-error-overlay] {
-    display: none !important;
-  }
-  
-  /* Hide any error messages that might appear */
-  [class*="error"],
-  [class*="Error"],
-  [id*="error"],
-  [id*="Error"] {
-    display: none !important;
-  }
-  
-  /* Hide script error overlays */
-  body > div[style*="position: fixed"],
-  body > div[style*="z-index: 9999"] {
-    display: none !important;
-  }
-}

@@ -6,10 +6,6 @@
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/Status-Production%20Ready-brightgreen.svg)](https://github.com/matthewlieb/spotify-imessage)
 
-> **✅ WORKING CODE** - This is a fully functional version tested and working as of December 28, 2024.  
-> **Repository**: https://github.com/matthewlieb/spotify-imessage  
-> **Setup**: See [Quick Start](#-quick-start) below for single-command launch.
-
 ## 🎯 **What It Does**
 
 Transform your message conversations into Spotify playlists! This tool automatically:
@@ -70,25 +66,29 @@ Transform your message conversations into Spotify playlists! This tool automatic
 
 ### **Starting the App**
 
-**Single Command Launch:**
+**macOS/Linux:**
 ```bash
+cd web-react
 ./start.sh
+```
+
+**Windows:**
+```cmd
+cd web-react
+start.bat
 ```
 
 That's it! The script will:
 - ✅ Check all prerequisites
-- ✅ Create virtual environment if needed
-- ✅ Install dependencies automatically
 - ✅ Clean up any existing processes
 - ✅ Start the Flask backend (port 8004)
 - ✅ Start the React frontend (port 3000)
+- ✅ Monitor both services
 - ✅ Provide clear status updates
 
-**Access Points:**
+### **Access Points**
 - **Web App**: http://localhost:3000
 - **API**: http://localhost:8004/api/
-
-**Note:** On first run, you'll need to configure your Spotify OAuth credentials. See [docs/SPOTIFY_OAUTH_SETUP.md](docs/SPOTIFY_OAUTH_SETUP.md) for detailed instructions.
 
 ## 🌍 **Cross-Platform Support**
 
@@ -110,14 +110,7 @@ That's it! The script will:
 
 ## 🛠️ **Installation**
 
-### **Automatic Setup (Recommended)**
-The `start.sh` script handles everything automatically:
-```bash
-./start.sh
-```
-
-### **Manual Setup**
-If you prefer manual setup:
+### **Setup**
 ```bash
 # Clone the repository
 git clone https://github.com/matthewlieb/spotify-imessage.git
@@ -127,8 +120,7 @@ cd spotify-imessage
 python3 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Install Python dependencies
-pip install -r requirements.txt
+# Install dependencies
 pip install -e .
 
 # Install Node.js dependencies
@@ -136,20 +128,20 @@ cd web-react
 npm install
 
 # Set up Spotify OAuth (see docs/SPOTIFY_OAUTH_SETUP.md)
-# The start.sh script will create a .env template if one doesn't exist
-# Edit web-react/.env with your Spotify app credentials
+cp env.example .env
+# Edit .env with your Spotify app credentials
 ```
 
 ### **Spotify OAuth Setup**
 1. Create a Spotify app at [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
 2. Set redirect URI to `http://127.0.0.1:8004/callback`
-3. Copy your Client ID and Client Secret to `web-react/.env`
+3. Copy your Client ID and Client Secret to `.env`
 4. See [docs/SPOTIFY_OAUTH_SETUP.md](docs/SPOTIFY_OAUTH_SETUP.md) for detailed instructions
 
 ## 📱 **Usage Examples**
 
 ### **Web Interface**
-1. **Start the app**: `./start.sh`
+1. **Start the app**: `./start.sh` (macOS/Linux) or `start.bat` (Windows)
 2. **Open browser**: http://localhost:3000
 3. **Sign in with Spotify**: One-click authentication
 4. **Choose method**:
@@ -158,22 +150,6 @@ npm install
    - **File Upload**: Upload message export file
 5. **Configure playlist**: Search or create Spotify playlist
 6. **Process tracks**: Add tracks to your playlist
-
-### **CLI Usage**
-The CLI tool can be used independently:
-```bash
-# Activate virtual environment
-source venv/bin/activate
-
-# Process iMessage chat
-python -m spotify_imessage.cli imessage --chat "My Group" --playlist YOUR_PLAYLIST_ID
-
-# Process Android export file
-python -m spotify_imessage.cli android-cmd --file export.txt --playlist YOUR_PLAYLIST_ID
-
-# See all commands
-python -m spotify_imessage.cli --help
-```
 
 ### **Getting Your Messages Data**
 
@@ -312,40 +288,42 @@ This tool has strong monetization potential in several areas:
 
 ### **Local Development**
 ```bash
-./start.sh
+cd web-react
+./start.sh  # macOS/Linux
+start.bat   # Windows
 ```
 
-### **Production Deployment**
-For production deployment, you'll need to:
-1. Build the React app: `cd web-react && npm run build`
-2. Set up environment variables for production
-3. Configure your production server (Flask, nginx, etc.)
-4. Update Spotify OAuth redirect URIs to your production domain
+### **Production**
+```bash
+# Build the React app
+npm run build
 
-**Note:** Deployment-specific files (Procfile, railway.json) have been removed to keep the repo clean for local development. Add them back when ready to deploy.
+# Start the Flask server
+python3 server.py --production
+```
+
+### **Docker**
+```bash
+docker build -t spotify-message .
+docker run -p 8004:8004 spotify-message
+```
 
 ## 🤝 **Contributing**
 
-We welcome contributions! 
+We welcome contributions! Please see our [Contributing Guide](docs/CONTRIBUTING.md) for details.
 
 ### **Development Setup**
 ```bash
 # Clone and setup
 git clone https://github.com/matthewlieb/spotify-imessage.git
 cd spotify-imessage
-
-# Install dependencies
-pip install -r requirements.txt
-pip install -e .
-
-# Install Node.js dependencies
-cd web-react
-npm install
+pip install -e ".[dev]"
 
 # Run tests
 pytest
 
 # Start development servers
+cd web-react
 ./start.sh
 ```
 
