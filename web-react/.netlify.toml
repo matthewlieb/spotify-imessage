@@ -1,3 +1,5 @@
+# This file is not used - Netlify uses the root .netlify.toml
+# Keeping for reference only
 [build]
   base = "web-react"
   publish = "build"
