@@ -1,12 +1,14 @@
 # Railway/Nixpacks: backend runs from web-react (Flask server.py)
-# Use python3 -m pip (pip not on PATH). Override build so only install runs.
+# Nix Python is externally managed; use a venv so we don't modify the system.
 
 [phases.install]
-# Nix python3 has no pip; bootstrap it then install deps
-cmds = ["cd web-react && python3 -m ensurepip --user --upgrade && python3 -m pip install --user --no-cache-dir -r requirements.txt"]
+cmds = [
+  "cd web-react && python3 -m venv .venv",
+  "cd web-react && .venv/bin/pip install --no-cache-dir -r requirements.txt"
+]
 
 [phases.build]
 cmds = []
 
 [start]
-cmd = "cd web-react && python3 server.py"
+cmd = "cd web-react && .venv/bin/python server.py"
