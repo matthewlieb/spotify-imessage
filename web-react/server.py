@@ -127,6 +127,16 @@ app.config['PERMANENT_SESSION_LIFETIME'] = 3600 * 24  # 24 hours (Spotify tokens
 logger.info("Flask app created successfully")
 logger.info("CORS enabled")  # Enable CORS for development
 
+# Apply security headers to all responses
+if SECURITY_AVAILABLE:
+    @app.after_request
+    def add_security_headers(response):
+        """Add security headers to all responses."""
+        headers = secure_headers()
+        for header, value in headers.items():
+            response.headers[header] = value
+        return response
+
 # Initialize Redis cache
 redis_client = None
 if REDIS_AVAILABLE:
