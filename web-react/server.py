@@ -89,7 +89,8 @@ except ImportError:
 from flask import session, redirect, url_for
 import secrets
 
-app = Flask(__name__)
+# Disable Flask's default static folder since we're serving from build/ directory
+app = Flask(__name__, static_folder=None, static_url_path=None)
 
 # Apply security configuration
 if SECURITY_AVAILABLE:
@@ -1593,11 +1594,25 @@ def serve_static_files(path):
     """Serve static files from build directory (only if not /api)."""
     if path.startswith('api/'):
         return jsonify({'error': 'Not found'}), 404
+    
     build_dir = os.path.join(os.path.dirname(__file__), 'build')
     file_path = os.path.join(build_dir, path)
+    
+    logger.info(f"Serving static file: path={path}, file_path={file_path}, exists={os.path.exists(file_path)}")
+    
     if os.path.exists(file_path) and os.path.isfile(file_path):
+        logger.info(f"✅ Serving static file: {path}")
         return send_from_directory(build_dir, path)
+    
+    # Check if it's a directory (like /static/)
+    if os.path.exists(file_path) and os.path.isdir(file_path):
+        logger.info(f"Path is a directory, serving index.html instead")
+        index_path = os.path.join(build_dir, 'index.html')
+        if os.path.exists(index_path):
+            return send_from_directory(build_dir, 'index.html')
+    
     # SPA fallback - serve index.html for any route
+    logger.info(f"File not found at {file_path}, serving index.html as SPA fallback")
     index_path = os.path.join(build_dir, 'index.html')
     if os.path.exists(index_path):
         return send_from_directory(build_dir, 'index.html')
