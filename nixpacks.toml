@@ -1,8 +1,11 @@
 # Railway/Nixpacks: backend runs from web-react (Flask server.py)
-# Use python3 -m pip because "pip" may not be on PATH in the build image
+# Use python3 -m pip (pip not on PATH). Override build so only install runs.
 
 [phases.install]
-cmds = ["cd web-react && python3 -m pip install -r requirements.txt"]
+cmds = ["cd web-react && python3 -m pip install --no-cache-dir -r requirements.txt"]
+
+[phases.build]
+cmds = []
 
 [start]
 cmd = "cd web-react && python3 server.py"

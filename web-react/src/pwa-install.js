@@ -1,6 +1,5 @@
 // PWA Install Prompt Handler
 let deferredPrompt = null;
-let installButton = null;
 
 export function initializePWAInstall() {
   // Listen for the beforeinstallprompt event

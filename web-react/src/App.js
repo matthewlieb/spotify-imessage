@@ -10,7 +10,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import './index.css';
-import { initializePWAInstall, promptInstall, showInstallButton, hideInstallButton } from './pwa-install';
+import { initializePWAInstall, promptInstall } from './pwa-install';
 
 // Dynamic API base - works for both development and production
 const API_BASE = process.env.REACT_APP_API_BASE || 
@@ -68,7 +68,7 @@ function App() {
         setLoading(false);
       })
       .catch(() => setLoading(false));
-  }, [API_BASE]);
+  }, []);
 
   // Handle OAuth callback - backend stores token in session, we just verify
   // Using useRef to prevent double execution in React StrictMode
