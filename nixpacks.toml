@@ -8,7 +8,8 @@ cmds = [
 ]
 
 [phases.build]
-cmds = []
+# Dependencies already installed in install phase; skip default pip (not on PATH)
+cmds = ["true"]
 
 [start]
 cmd = "cd web-react && .venv/bin/python server.py"
