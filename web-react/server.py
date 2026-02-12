@@ -1553,8 +1553,28 @@ def spotify_logout():
 @app.route('/')
 def serve_react_app():
     """Serve the React app (production build)."""
-    if os.path.exists(os.path.join(os.path.dirname(__file__), 'build', 'index.html')):
-        return send_from_directory('build', 'index.html')
+    build_dir = os.path.join(os.path.dirname(__file__), 'build')
+    build_path = os.path.join(build_dir, 'index.html')
+    
+    logger.info(f"Looking for React build at: {build_path}")
+    logger.info(f"Current working directory: {os.getcwd()}")
+    logger.info(f"Server file location: {os.path.dirname(__file__)}")
+    
+    # List contents of build directory if it exists
+    if os.path.exists(build_dir):
+        try:
+            contents = os.listdir(build_dir)
+            logger.info(f"Build directory exists. Contents: {contents}")
+        except Exception as e:
+            logger.error(f"Error listing build directory: {e}")
+    else:
+        logger.error(f"Build directory does not exist at: {build_dir}")
+    
+    if os.path.exists(build_path):
+        logger.info(f"✅ Found React build, serving index.html")
+        # Use absolute path for send_from_directory
+        return send_from_directory(build_dir, 'index.html')
+    logger.error(f"❌ React build not found at: {build_path}")
     return jsonify({'error': 'React build not found. Run npm run build or use dev server on port 3000.'}), 404
 
 
@@ -1564,9 +1584,14 @@ def serve_static_files(path):
     if path.startswith('api/'):
         return jsonify({'error': 'Not found'}), 404
     build_dir = os.path.join(os.path.dirname(__file__), 'build')
-    if os.path.exists(os.path.join(build_dir, path)):
-        return send_from_directory('build', path)
-    return send_from_directory('build', 'index.html')  # SPA fallback
+    file_path = os.path.join(build_dir, path)
+    if os.path.exists(file_path) and os.path.isfile(file_path):
+        return send_from_directory(build_dir, path)
+    # SPA fallback - serve index.html for any route
+    index_path = os.path.join(build_dir, 'index.html')
+    if os.path.exists(index_path):
+        return send_from_directory(build_dir, 'index.html')
+    return jsonify({'error': 'React build not found'}), 404
 
 
 if __name__ == '__main__':
@@ -1576,8 +1601,25 @@ if __name__ == '__main__':
     print("🔧 API endpoints available at: http://localhost:8004/api/")
     print()
     
-    # Check if build directory exists
-    if not os.path.exists('build'):
+    # Check if build directory exists and log details
+    build_path = os.path.join(os.path.dirname(__file__), 'build')
+    print(f"🔍 Checking for React build at: {build_path}")
+    print(f"📂 Current working directory: {os.getcwd()}")
+    print(f"📄 Server file location: {os.path.dirname(__file__)}")
+    
+    if os.path.exists(build_path):
+        print(f"✅ Build directory found!")
+        try:
+            contents = os.listdir(build_path)
+            print(f"📦 Build directory contents: {contents}")
+            index_path = os.path.join(build_path, 'index.html')
+            if os.path.exists(index_path):
+                print(f"✅ index.html found at: {index_path}")
+            else:
+                print(f"❌ index.html NOT found in build directory")
+        except Exception as e:
+            print(f"⚠️  Error listing build directory: {e}")
+    else:
         print("⚠️  Build directory not found.")
         print("Please run 'npm run build' first.")
         print()
@@ -1617,6 +1659,23 @@ if __name__ == "__main__":
             print(f"🚀 Starting spotify_message web server...")
             print(f"📱 React app will be available at: http://localhost:3000")
             print(f"🔧 API endpoints available at: http://localhost:{port}/api/")
+        
+        # Verify build directory exists before starting
+        build_dir = os.path.join(os.path.dirname(__file__), 'build')
+        logger.info(f"Checking for React build at: {build_dir}")
+        logger.info(f"Current working directory: {os.getcwd()}")
+        logger.info(f"Server file location: {os.path.dirname(__file__)}")
+        
+        if os.path.exists(build_dir):
+            contents = os.listdir(build_dir)
+            logger.info(f"✅ Build directory found! Contents: {contents}")
+            index_path = os.path.join(build_dir, 'index.html')
+            if os.path.exists(index_path):
+                logger.info(f"✅ index.html found at: {index_path}")
+            else:
+                logger.error(f"❌ index.html NOT found in build directory")
+        else:
+            logger.error(f"❌ Build directory does not exist at: {build_dir}")
         
         logger.info(f"Starting Flask server on port {port}")
         print(f"🚀 Flask server starting on port {port}")
