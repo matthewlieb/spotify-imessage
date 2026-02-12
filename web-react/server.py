@@ -171,7 +171,8 @@ SPOTIFY_CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET')
 SPOTIFY_REDIRECT_URI = os.getenv('SPOTIFY_REDIRECT_URI', 'http://127.0.0.1:8004/callback')
 
 # Frontend URL configuration (for OAuth redirects)
-FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+# Note: Spotify no longer supports 'localhost' - must use '127.0.0.1' for local dev
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://127.0.0.1:3000')
 
 # Validate required environment variables
 if not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_SECRET:
