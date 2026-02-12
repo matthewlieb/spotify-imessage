@@ -2,6 +2,17 @@ import React from 'react';
 
 // Global error handling utilities
 export const handleError = (error, context = 'Unknown') => {
+  // Don't handle null, undefined, or empty errors
+  if (!error || error === null || error === undefined) {
+    return null;
+  }
+  
+  // Don't log script errors to avoid noise
+  if (error && error.message && error.message.includes('Script error')) {
+    console.warn(`[${context}] Script error suppressed:`, error);
+    return null;
+  }
+  
   console.error(`[${context}] Error:`, error);
   
   // Log to error reporting service if available

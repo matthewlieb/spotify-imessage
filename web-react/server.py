@@ -12,6 +12,7 @@ import tempfile
 import json
 import sqlite3
 import shutil
+import re
 from datetime import datetime
 from pathlib import Path
 from flask import Flask, request, jsonify, send_file, send_from_directory
@@ -54,9 +55,10 @@ except ImportError:
     SECURITY_AVAILABLE = False
     print("Warning: Security modules not available. Running in basic mode.")
 
-# Configure comprehensive logging
+# Configure logging: INFO in production to reduce I/O; DEBUG only when FLASK_DEBUG=1
+_log_level = logging.DEBUG if os.getenv('FLASK_DEBUG') == '1' else logging.INFO
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=_log_level,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
@@ -114,9 +116,13 @@ else:
     CORS(app, supports_credentials=True, origins=['http://localhost:3000', 'http://127.0.0.1:3000'])
     app.secret_key = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(32))
 
-# Configure session settings for better reliability
+# Configure session settings for better reliability (Spotify OAuth best practices)
 app.config['SESSION_COOKIE_DOMAIN'] = None  # Allow cookies for both localhost and 127.0.0.1
 app.config['SESSION_COOKIE_PATH'] = '/'  # Ensure cookie is available for all paths
+app.config['SESSION_COOKIE_HTTPONLY'] = True  # Security: prevent XSS
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # Allow cross-site cookies for OAuth redirect
+app.config['SESSION_COOKIE_SECURE'] = False  # Set to True in production with HTTPS
+app.config['PERMANENT_SESSION_LIFETIME'] = 3600 * 24  # 24 hours (Spotify tokens last 1 hour, refresh when needed)
 
 logger.info("Flask app created successfully")
 logger.info("CORS enabled")  # Enable CORS for development
@@ -163,6 +169,9 @@ temp_auth_tokens = {}
 SPOTIFY_CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID')
 SPOTIFY_CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET')
 SPOTIFY_REDIRECT_URI = os.getenv('SPOTIFY_REDIRECT_URI', 'http://127.0.0.1:8004/callback')
+
+# Frontend URL configuration (for OAuth redirects)
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 
 # Validate required environment variables
 if not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_SECRET:
@@ -214,20 +223,53 @@ def invalidate_cache_pattern(pattern):
         return False
 
 def get_spotify_client():
-    """Get authenticated Spotify client from session."""
+    """Get authenticated Spotify client from session with token refresh."""
     if not SPOTIFY_AVAILABLE:
         return None
     
     try:
         # Check if user is authenticated via session
         if 'spotify_token' not in session:
+            logger.debug("No spotify_token in session")
+            return None
+        
+        token_info = session['spotify_token']
+        access_token = token_info.get('access_token')
+        
+        if not access_token:
+            logger.warning("No access_token in session token_info")
             return None
         
         # Create Spotify client with session token
-        sp = spotipy.Spotify(auth=session['spotify_token']['access_token'])
+        sp = spotipy.Spotify(auth=access_token)
+        
+        # Test the token by making a simple API call
+        try:
+            sp.current_user()
+        except spotipy.exceptions.SpotifyException as e:
+            if e.http_status == 401:
+                logger.warning("Access token expired, attempting refresh")
+                # Try to refresh the token
+                oauth = get_spotify_oauth()
+                if oauth and 'refresh_token' in token_info:
+                    try:
+                        new_token_info = oauth.refresh_access_token(token_info['refresh_token'])
+                        session['spotify_token'] = new_token_info
+                        session.modified = True
+                        sp = spotipy.Spotify(auth=new_token_info['access_token'])
+                        logger.info("Token refreshed successfully")
+                    except Exception as refresh_error:
+                        logger.error(f"Token refresh failed: {refresh_error}")
+                        session.pop('spotify_token', None)
+                        return None
+                else:
+                    logger.warning("No refresh token available")
+                    session.pop('spotify_token', None)
+                    return None
+        
         return sp
     except Exception as e:
-        print(f"Error initializing Spotify client: {e}")
+        logger.error(f"Error initializing Spotify client: {e}")
         # Clear invalid token from session
         session.pop('spotify_token', None)
         return None
@@ -243,6 +285,27 @@ def get_spotify_oauth():
         redirect_uri=SPOTIFY_REDIRECT_URI,
         scope=SPOTIFY_SCOPE
     )
+
+# Regex for Spotify IDs
+SPOTIFY_ID_RE = re.compile(r"[A-Za-z0-9]{22}")
+
+def _validate_playlist_id(playlist_id: str) -> None:
+    """Validate Spotify playlist ID format."""
+    if not playlist_id or len(playlist_id) != 22 or not SPOTIFY_ID_RE.fullmatch(playlist_id):
+        raise ValueError(f"Invalid playlist ID: {playlist_id}. Expected 22-character alphanumeric string.")
+
+def _existing_track_ids(sp, playlist_id: str) -> set:
+    """Get set of existing track IDs in a playlist."""
+    try:
+        existing = set()
+        results = sp.playlist_items(playlist_id, fields='items(track(id))')
+        for item in results.get('items', []):
+            if item.get('track') and item['track'].get('id'):
+                existing.add(item['track']['id'])
+        return existing
+    except Exception as e:
+        logger.error(f"Error fetching existing tracks: {e}")
+        return set()
 
 def search_playlist_by_name(playlist_name):
     """Search for a playlist by name and return its ID."""
@@ -388,11 +451,12 @@ def scan_imessage_chats():
                     # Get file modification time as last activity
                     mtime = os.path.getmtime(chat_file)
                     last_date_str = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
-                    
+                    ids_list = list(track_ids)
                     chats.append({
                         'name': chat_name,
                         'type': 'imessage',
-                        'trackCount': len(track_ids),
+                        'trackCount': len(ids_list),
+                        'trackIds': ids_list,
                         'lastActivity': last_date_str
                     })
         
@@ -417,13 +481,13 @@ def scan_imessage_chats():
 def run_spotify_message_command(command_type, options, chat_name=None):
     """Run spotify-message command and capture output."""
     try:
-        # Build command based on type
+        # Build command based on type - use the installed CLI
         if command_type == 'imessage':
-            cmd = ['spotify_message', 'imessage', '--chat', chat_name]
+            cmd = ['spotify-imessage', 'imessage', '--chat', chat_name]
         elif command_type == 'android':
-            cmd = ['spotify_message', 'android', '--file', options.get('file_path', '')]
+            cmd = ['spotify-imessage', 'android-cmd', '--file', options.get('file_path', '')]
         elif command_type == 'file':
-            cmd = ['spotify_message', 'file', '--input', options.get('file_path', '')]
+            cmd = ['spotify-imessage', 'file', '--file', options.get('file_path', '')]
         else:
             return {'error': f'Unknown command type: {command_type}'}
         
@@ -489,18 +553,6 @@ def run_spotify_message_command(command_type, options, chat_name=None):
         return {'error': f'Error running command: {str(e)}'}
 
 
-@app.route('/')
-def serve_react_app():
-    """Serve the React app."""
-    return send_from_directory('build', 'index.html')
-
-
-@app.route('/<path:path>')
-def serve_static_files(path):
-    """Serve static files from build directory."""
-    return send_from_directory('build', path)
-
-
 @app.route('/api/scan-imessage', methods=['POST'])
 def scan_imessage():
     """Scan iMessage database for chats with Spotify links."""
@@ -561,6 +613,72 @@ def create_playlist():
                 'message': 'Failed to create playlist'
             })
     except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/playlist/add-tracks', methods=['POST'])
+def add_tracks_to_playlist():
+    """Add specific track IDs to a playlist using Spotify API directly."""
+    try:
+        data = request.get_json()
+        playlist_id = data.get('playlist_id')
+        track_ids = data.get('track_ids', [])
+        
+        if not playlist_id:
+            return jsonify({'error': 'Playlist ID is required'}), 400
+        
+        if not track_ids or len(track_ids) == 0:
+            return jsonify({'error': 'At least one track ID is required'}), 400
+        
+        # Validate playlist ID format
+        _validate_playlist_id(playlist_id)
+        
+        # Get Spotify client
+        sp = get_spotify_client()
+        if not sp:
+            return jsonify({'error': 'Spotify authentication required'}), 401
+        
+        # Validate track IDs
+        valid_track_ids = []
+        for tid in track_ids:
+            if SPOTIFY_ID_RE.fullmatch(tid):
+                valid_track_ids.append(tid)
+        
+        if not valid_track_ids:
+            return jsonify({'error': 'No valid track IDs provided'}), 400
+        
+        # Check for existing tracks (deduplication)
+        existing = _existing_track_ids(sp, playlist_id)
+        new_tracks = [tid for tid in valid_track_ids if tid not in existing]
+        
+        if not new_tracks:
+            return jsonify({
+                'success': True,
+                'tracks_added': 0,
+                'message': 'All selected tracks are already in the playlist'
+            })
+        
+        # Convert to URIs and add in batches of 100
+        uris = [f"spotify:track:{tid}" for tid in new_tracks]
+        tracks_added = 0
+        
+        for i in range(0, len(uris), 100):
+            batch = uris[i:i+100]
+            try:
+                sp.playlist_add_items(playlist_id, batch)
+                tracks_added += len(batch)
+            except Exception as e:
+                logger.error(f"Error adding batch {i//100 + 1}: {e}")
+                # Continue with next batch
+        
+        return jsonify({
+            'success': True,
+            'tracks_added': tracks_added,
+            'message': f'Successfully added {tracks_added} track(s) to playlist'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error adding tracks to playlist: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -778,13 +896,54 @@ def health_check():
 
 @app.route('/api/track-details', methods=['POST'])
 def get_track_details():
-    """Get detailed track information for a chat using real data from Smart Detection"""
+    """Get detailed track information for a chat using real data from Smart Detection, or from track_ids"""
     try:
         data = request.get_json()
         chat_name = data.get('chat_name')
+        track_ids = data.get('track_ids', [])
+        
+        # Support both chat_name and track_ids
+        if track_ids and len(track_ids) > 0:
+            # Direct track IDs provided (e.g., from pasted text)
+            logger.info(f"Getting track details for {len(track_ids)} track IDs")
+            
+            sp = get_spotify_client()
+            if not sp:
+                return jsonify({
+                    'success': False,
+                    'error': 'Spotify authentication required. Please log out and sign in again.',
+                    'requires_auth': True
+                }), 401
+            
+            # Get track details in batches (Spotify API limit is 50 tracks per request)
+            tracks = []
+            for i in range(0, len(track_ids), 50):
+                batch_ids = track_ids[i:i+50]
+                try:
+                    batch_tracks = sp.tracks(batch_ids)
+                    for track in batch_tracks['tracks']:
+                        if track:
+                            tracks.append({
+                                'id': track['id'],
+                                'name': track['name'],
+                                'artist': ', '.join([artist['name'] for artist in track['artists']]),
+                                'album': track['album']['name'],
+                                'album_art': track['album']['images'][0]['url'] if track['album']['images'] else None,
+                                'duration': f"{track['duration_ms'] // 60000}:{(track['duration_ms'] % 60000) // 1000:02d}",
+                                'preview_url': track.get('preview_url'),
+                                'external_url': track['external_urls']['spotify']
+                            })
+                except Exception as e:
+                    logger.error(f"Error fetching batch of tracks: {e}")
+                    continue
+            
+            return jsonify({
+                'success': True,
+                'tracks': tracks
+            })
         
         if not chat_name:
-            return jsonify({'success': False, 'error': 'Chat name required'}), 400
+            return jsonify({'success': False, 'error': 'Chat name or track_ids required'}), 400
         
         logger.info(f"Getting track details for chat: {chat_name}")
         
@@ -934,9 +1093,11 @@ def get_track_details():
             try:
                 sp = get_spotify_client()
                 if not sp:
+                    logger.error("Spotify client not available - authentication required")
                     return jsonify({
                         'success': False,
-                        'error': 'Spotify authentication required'
+                        'error': 'Spotify authentication required. Please log out and sign in again.',
+                        'requires_auth': True
                     }), 401
                 
                 # Get track details in batches (Spotify API limit is 50 tracks per request)
@@ -953,41 +1114,62 @@ def get_track_details():
                     
                     try:
                         track_details = sp.tracks(batch_ids)
-                    except Exception as e:
+                    except spotipy.exceptions.SpotifyException as e:
                         logger.error(f"Spotify API error for batch: {e}")
+                        # If it's an auth error, return error immediately
+                        if e.http_status == 401 or e.http_status == 403:
+                            return jsonify({
+                                'success': False,
+                                'error': 'Spotify authentication expired. Please log out and sign in again.',
+                                'requires_auth': True
+                            }), 401
                         logger.error(f"Problematic track IDs: {batch_ids}")
                         continue
+                    except Exception as e:
+                        logger.error(f"Unexpected error fetching tracks: {e}")
+                        continue
                     
-                    for i, track in enumerate(track_details['tracks']):
+                    for idx, track in enumerate(track_details['tracks']):
                         if track:  # Skip None tracks (invalid IDs)
                             track_id = track['id']
                             sent_order = track_data.get(track_id, 0) # Get order in chat
                             
-                            # Create a more meaningful "sent" display based on order
-                            # Show as "Track #X" where X is the order in the chat
-                            sent_display = f"Track #{sent_order + 1}" if sent_order >= 0 else "Unknown order"
+                            # Get album art (prefer largest, fallback to medium, then small)
+                            album_art = None
+                            if track.get('album') and track['album'].get('images'):
+                                # Sort by width descending to get largest first
+                                images = sorted(track['album']['images'], key=lambda x: x.get('width', 0), reverse=True)
+                                album_art = images[0]['url'] if images else None
+                            
+                            # Format duration
+                            duration_ms = track.get('duration_ms', 0)
+                            minutes = duration_ms // 60000
+                            seconds = (duration_ms % 60000) // 1000
+                            duration = f"{minutes}:{seconds:02d}"
+                            
+                            # Get artist names
+                            artist_names = ', '.join([artist['name'] for artist in track.get('artists', [])])
                             
                             # Validate track data before adding
-                            if track.get('name') and track.get('artists') and track.get('album'):
+                            if track.get('name') and track.get('artists'):
                                 tracks.append({
                                     'id': track_id,
                                     'name': track['name'],
-                                    'artist': ', '.join([artist['name'] for artist in track['artists']]),
-                                    'album': track['album']['name'],
-                                    'duration': f"{track['duration_ms'] // 60000}:{(track['duration_ms'] % 60000) // 1000:02d}",
-                                    'spotify_url': track['external_urls']['spotify'],
-                                    'album_art': track['album']['images'][0]['url'] if track['album']['images'] else None,
-                                    'release_date': track['album']['release_date'],
-                                    'popularity': track['popularity'],
-                                    'sent_timestamp': sent_display, # Show order in chat
-                                    'sent_order': sent_order # Store numeric order for sorting
+                                    'artist': artist_names,
+                                    'album': track.get('album', {}).get('name', 'Unknown Album'),
+                                    'duration': duration,
+                                    'spotify_url': track.get('external_urls', {}).get('spotify', ''),
+                                    'album_art': album_art,
+                                    'release_date': track.get('album', {}).get('release_date', ''),
+                                    'popularity': track.get('popularity', 0),
+                                    'sent_order': sent_order
                                 })
                             else:
                                 logger.warning(f"Skipping invalid track data: {track}")
                         else:
                             # Log invalid track IDs for debugging
-                            if i < len(batch_ids):
-                                invalid_id = batch_ids[i]
+                            if idx < len(batch_ids):
+                                invalid_id = batch_ids[idx]
                                 logger.warning(f"Invalid Spotify track ID: {invalid_id}")
                 
                 # Clean up temporary directory
@@ -1100,22 +1282,28 @@ def spotify_callback():
         if not code:
             return jsonify({'error': 'Authorization code not provided'}), 400
         
-        # Exchange code for token
+        # Exchange authorization code for access token (Spotify best practice: do this immediately)
+        # Reference: https://developer.spotify.com/documentation/web-api/concepts/authorization
         oauth = get_spotify_oauth()
         if not oauth:
             return jsonify({'error': 'Spotify OAuth not available'}), 500
         
         token_info = oauth.get_access_token(code)
         
-        # Store token in session
+        if not token_info or 'access_token' not in token_info:
+            logger.error("Failed to get access token from Spotify")
+            return redirect(f'{FRONTEND_URL}?spotify_auth=error')
+        
+        # Get user info immediately (validate token works)
+        try:
+            sp = spotipy.Spotify(auth=token_info['access_token'])
+            user = sp.current_user()
+        except Exception as e:
+            logger.error(f"Failed to get user info: {e}")
+            return redirect(f'{FRONTEND_URL}?spotify_auth=error')
+        
+        # Store token and user in session (session is source of truth)
         session['spotify_token'] = token_info
-        logger.info(f"Stored spotify_token in session: {bool(session.get('spotify_token'))}")
-        
-        # Get user info
-        sp = spotipy.Spotify(auth=token_info['access_token'])
-        user = sp.current_user()
-        
-        # Store user info in session
         session['spotify_user'] = {
             'id': user['id'],
             'display_name': user['display_name'],
@@ -1123,72 +1311,152 @@ def spotify_callback():
             'country': user.get('country', ''),
             'product': user.get('product', '')
         }
-        logger.info(f"Stored spotify_user in session: {bool(session.get('spotify_user'))}")
-        logger.info(f"Session keys after storing: {list(session.keys())}")
         
-        # Generate a temporary auth token
-        auth_token = secrets.token_urlsafe(32)
-        
-        # Store auth data in temporary storage
-        temp_auth_tokens[auth_token] = {
-            'spotify_token': token_info,
-            'spotify_user': {
-                'id': user['id'],
-                'display_name': user['display_name'],
-                'email': user.get('email', ''),
-                'country': user.get('country', ''),
-                'product': user.get('product', '')
-            },
-            'timestamp': datetime.now()
-        }
-        
-        # Now clear the oauth_state from session
+        # Clear oauth_state from session
         if 'oauth_state' in session:
             del session['oauth_state']
         
-        # Force session to be saved
+        # Mark session as permanent and modified
         session.permanent = True
         session.modified = True
         
-        # Redirect to frontend with success and auth token
-        logger.info("About to redirect to frontend with auth token")
-        return redirect(f'http://localhost:3000?spotify_auth=success&token={auth_token}')
+        logger.info(f"✅ OAuth callback successful - stored token and user in session")
+        logger.info(f"Session keys: {list(session.keys())}")
+        
+        # Generate temporary token for frontend (optional - session already has everything)
+        # This allows frontend to verify, but session is the real source of truth
+        auth_token = secrets.token_urlsafe(32)
+        temp_auth_tokens[auth_token] = {
+            'spotify_token': token_info,
+            'spotify_user': session['spotify_user'],
+            'timestamp': datetime.now()
+        }
+        
+        # Redirect to frontend - session is already set, frontend just needs to check status
+        return redirect(f'{FRONTEND_URL}?spotify_auth=success&token={auth_token}')
         
     except Exception as e:
         logger.error(f"Error in Spotify callback: {e}")
-        return redirect('http://localhost:3000?spotify_auth=error')
+        return redirect(f'{FRONTEND_URL}?spotify_auth=error')
+
+@app.route('/api/auth/exchange-code', methods=['POST'])
+def exchange_code():
+    """Exchange Spotify authorization code for access token (for iOS app)."""
+    try:
+        data = request.get_json()
+        code = data.get('code')
+        redirect_uri = data.get('redirect_uri', 'spotifymessage://callback')
+        
+        if not code:
+            return jsonify({'error': 'Authorization code is required'}), 400
+        
+        # Exchange code for token using Spotify OAuth
+        oauth = get_spotify_oauth()
+        if not oauth:
+            return jsonify({'error': 'Spotify OAuth not available'}), 500
+        
+        # Create a custom OAuth instance with the iOS redirect URI
+        from spotipy.oauth2 import SpotifyOAuth
+        ios_oauth = SpotifyOAuth(
+            client_id=SPOTIFY_CLIENT_ID,
+            client_secret=SPOTIFY_CLIENT_SECRET,
+            redirect_uri=redirect_uri,
+            scope=SPOTIFY_SCOPE
+        )
+        
+        token_info = ios_oauth.get_access_token(code)
+        
+        if not token_info or 'access_token' not in token_info:
+            logger.error("Failed to exchange code for token")
+            return jsonify({'error': 'Failed to exchange authorization code'}), 400
+        
+        return jsonify({
+            'access_token': token_info.get('access_token'),
+            'refresh_token': token_info.get('refresh_token'),
+            'expires_in': token_info.get('expires_in'),
+            'token_type': token_info.get('token_type', 'Bearer')
+        })
+        
+    except Exception as e:
+        logger.error(f"Error exchanging code: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/auth/exchange-token', methods=['POST'])
 def exchange_auth_token():
-    """Exchange temporary auth token for session data."""
+    """
+    Exchange temporary auth token for session data.
+    
+    This endpoint is idempotent - it can be called multiple times safely.
+    Based on Spotify OAuth 2.0 best practices:
+    - Authorization codes should be exchanged promptly
+    - Session is the source of truth for authentication
+    - Token exchange is only needed if session doesn't have token
+    """
     try:
         data = request.get_json()
         auth_token = data.get('token')
         
+        # CRITICAL: Check session FIRST (idempotent - handles React StrictMode double calls)
+        if 'spotify_token' in session and 'spotify_user' in session:
+            logger.info("Session already authenticated - returning existing user (idempotent)")
+            return jsonify({
+                'success': True,
+                'message': 'Authentication successful (already authenticated)',
+                'user': session['spotify_user']
+            })
+        
         if not auth_token:
+            logger.error("No token provided in exchange request")
             return jsonify({'error': 'No token provided'}), 400
         
-        # Check if token exists and is not expired (1 hour)
+        # Check if token exists in temporary storage
         if auth_token not in temp_auth_tokens:
+            logger.warning(f"Token not found in temp_auth_tokens. Available: {len(temp_auth_tokens)} tokens")
+            # Final check - session might have been set by another request
+            if 'spotify_token' in session and 'spotify_user' in session:
+                logger.info("Found token in session after temp token check")
+                return jsonify({
+                    'success': True,
+                    'message': 'Authentication successful (session found)',
+                    'user': session['spotify_user']
+                })
             return jsonify({'error': 'Invalid or expired token'}), 400
         
         auth_data = temp_auth_tokens[auth_token]
         
-        # Check if token is expired (1 hour)
-        if (datetime.now() - auth_data['timestamp']).seconds > 3600:
+        # Check if token is expired (5 minutes - Spotify best practice: exchange promptly)
+        time_diff = (datetime.now() - auth_data['timestamp']).total_seconds()
+        if time_diff > 300:  # 5 minutes
+            logger.warning(f"Token expired: {time_diff} seconds old")
+            # Check session one more time before failing
+            if 'spotify_token' in session and 'spotify_user' in session:
+                logger.info("Session has token despite expired temp token")
+                return jsonify({
+                    'success': True,
+                    'message': 'Authentication successful (session active)',
+                    'user': session['spotify_user']
+                })
             del temp_auth_tokens[auth_token]
-            return jsonify({'error': 'Token expired'}), 400
+            return jsonify({'error': 'Token expired. Please sign in again.'}), 400
         
-        # Store auth data in session
+        # Store auth data in session (session is source of truth)
         session['spotify_token'] = auth_data['spotify_token']
         session['spotify_user'] = auth_data['spotify_user']
         session.permanent = True
         session.modified = True
         
-        # Remove the temporary token
-        del temp_auth_tokens[auth_token]
+        # Remove temporary token AFTER successful session storage
+        # But only if we successfully stored it
+        try:
+            del temp_auth_tokens[auth_token]
+        except KeyError:
+            # Token already deleted (race condition), that's okay
+            pass
         
-        logger.info(f"Exchanged token for session data: {list(session.keys())}")
+        logger.info(f"Successfully exchanged token - session keys: {list(session.keys())}")
+        logger.info(f"Token stored - has access_token: {'access_token' in session['spotify_token']}")
         
         return jsonify({
             'success': True,
@@ -1198,6 +1466,16 @@ def exchange_auth_token():
         
     except Exception as e:
         logger.error(f"Error exchanging auth token: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        # Check session as fallback
+        if 'spotify_token' in session and 'spotify_user' in session:
+            logger.info("Returning session data despite error")
+            return jsonify({
+                'success': True,
+                'message': 'Authentication successful (using session)',
+                'user': session['spotify_user']
+            })
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/auth/status')
@@ -1268,6 +1546,26 @@ def spotify_logout():
     except Exception as e:
         logger.error(f"Error during logout: {e}")
         return jsonify({'error': str(e)}), 500
+
+
+# Serve React app (must be last so /api/* routes match first)
+@app.route('/')
+def serve_react_app():
+    """Serve the React app (production build)."""
+    if os.path.exists(os.path.join(os.path.dirname(__file__), 'build', 'index.html')):
+        return send_from_directory('build', 'index.html')
+    return jsonify({'error': 'React build not found. Run npm run build or use dev server on port 3000.'}), 404
+
+
+@app.route('/<path:path>')
+def serve_static_files(path):
+    """Serve static files from build directory (only if not /api)."""
+    if path.startswith('api/'):
+        return jsonify({'error': 'Not found'}), 404
+    build_dir = os.path.join(os.path.dirname(__file__), 'build')
+    if os.path.exists(os.path.join(build_dir, path)):
+        return send_from_directory('build', path)
+    return send_from_directory('build', 'index.html')  # SPA fallback
 
 
 if __name__ == '__main__':

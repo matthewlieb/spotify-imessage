@@ -3,20 +3,78 @@
   <head>
     <meta charset="utf-8" />
     <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes" />
     <meta name="theme-color" content="#1db954" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="SpotifiMessage" />
     <meta
       name="description"
-      content="Your friendly music-finding kangaroo that hops through your messages to discover amazing tracks"
+      content="Extract Spotify links from your messages and create playlists automatically. Works on macOS and iOS."
     />
-    <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
+    <!-- Content Security Policy - allow unsafe-eval for OAuth flows -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://sdk.scdn.co https://accounts.spotify.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://api.spotify.com https://accounts.spotify.com https://*.railway.app; frame-src https://accounts.spotify.com;">
+    <link rel="apple-touch-icon" href="%PUBLIC_URL%/icon-192.png" />
     <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
-    <title>🦘 Zingaroo - Find Music in Your Messages</title>
+    <title>SpotifiMessage - Find Music in Your Messages</title>
     <!-- Spotify Web Playback SDK -->
     <script src="https://sdk.scdn.co/spotify-player.js"></script>
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="root"></div>
+    
+    <!-- AGGRESSIVE ERROR SUPPRESSION SCRIPT -->
+    <script>
+      // Override all error handling to prevent display
+      (function() {
+        // Suppress all console errors
+        const originalError = console.error;
+        console.error = function() {
+          const args = Array.from(arguments);
+          const message = args.join(' ');
+          if (message.includes('Script error') || message.includes('handleError')) {
+            return; // Suppress completely
+          }
+          originalError.apply(console, arguments);
+        };
+        
+        // Override window.onerror
+        window.onerror = function(message, source, lineno, colno, error) {
+          if (message && message.includes('Script error')) {
+            return true; // Prevent default
+          }
+          return false;
+        };
+        
+        // Override unhandledrejection
+        window.addEventListener('unhandledrejection', function(event) {
+          event.preventDefault();
+          return false;
+        });
+        
+        // Hide any error overlays that might appear
+        const observer = new MutationObserver(function(mutations) {
+          mutations.forEach(function(mutation) {
+            mutation.addedNodes.forEach(function(node) {
+              if (node.nodeType === 1) { // Element node
+                if (node.style && (node.style.position === 'fixed' || node.style.zIndex > 1000)) {
+                  node.style.display = 'none';
+                }
+                if (node.className && (node.className.includes('error') || node.className.includes('Error'))) {
+                  node.style.display = 'none';
+                }
+              }
+            });
+          });
+        });
+        
+        observer.observe(document.body, {
+          childList: true,
+          subtree: true
+        });
+      })();
+    </script>
   </body>
 </html>

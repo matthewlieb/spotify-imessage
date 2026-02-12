@@ -1,5 +1,5 @@
 """
-API Resilience Module for Zingaroo
+API Resilience Module for SpotifiMessage
 Handles API changes, library updates, and graceful degradation
 """
 

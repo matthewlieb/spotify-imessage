@@ -45,7 +45,7 @@ Jan 21, 2024 16:45:22 - John Doe: Late afternoon vibes: https://open.spotify.com
         export_file.write_text(self.sample_android_export)
         
         # Test the parsing function (mock implementation)
-        with patch('spotify_imessage.cli._extract_track_ids_from_android_export') as mock_parse:
+        with patch('spotify_imessage.android.extract_track_ids_from_android_export') as mock_parse:
             mock_parse.return_value = [
                 "4iV5W9uYEdYUVa79Axb7Rh",
                 "6rqhFgbbKwnb9MLmUQDhG6", 
@@ -75,7 +75,7 @@ Jan 21, 2024 16:45:22 - John Doe: Late afternoon vibes: https://open.spotify.com
         ]
         
         # Mock the date parsing function
-        with patch('spotify_imessage.cli._parse_android_date_format') as mock_parse:
+        with patch('spotify_imessage.android.parse_android_date') as mock_parse:
             mock_parse.return_value = "2024-01-15T14:30:22"
             
             for date_str in date_formats:
@@ -98,7 +98,7 @@ Jan 21, 2024 16:45:22 - John Doe: Late afternoon vibes: https://open.spotify.com
         ]
         
         # Mock the detection function
-        with patch('spotify_imessage.cli._is_android_export_line') as mock_detect:
+        with patch('spotify_imessage.android.is_android_export_line') as mock_detect:
             mock_detect.side_effect = lambda line: any(
                 pattern in line for pattern in ["2024-", "Jan ", "21/01/"]
             )
@@ -124,21 +124,20 @@ Jan 21, 2024 16:45:22 - John Doe: Late afternoon vibes: https://open.spotify.com
             "7lEptt4wbM0yJTvSG5EBof"
         ]
         
-        # Mock the extraction function
-        with patch('spotify_imessage.cli._extract_spotify_urls_from_android_line') as mock_extract:
-            mock_extract.side_effect = lambda line: [
-                url.split('/')[-1] for url in line.split() 
-                if 'open.spotify.com/track/' in url
-            ]
-            
-            all_extracted = []
-            for message in android_messages:
-                extracted = mock_extract(message)
-                all_extracted.extend(extracted)
-            
+        # Use real android module: extract_track_ids_from_android_export expects a file path.
+        # Test URL extraction by parsing a temp file.
+        import spotify_imessage.android as android
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+            f.write('\n'.join(android_messages))
+            tmp_path = f.name
+        try:
+            result = android.extract_track_ids_from_android_export(tmp_path, None)
+            all_extracted = list(result)
             assert len(all_extracted) == 4
             for track_id in expected_track_ids:
                 assert track_id in all_extracted
+        finally:
+            os.unlink(tmp_path)
 
     def test_android_export_edge_cases(self):
         """Test edge cases in Android export parsing."""
@@ -157,29 +156,22 @@ Jan 21, 2024 16:45:22 - John Doe: Late afternoon vibes: https://open.spotify.com
         ]
         
         # Mock the parsing function
-        with patch('spotify_imessage.cli._extract_track_ids_from_android_export') as mock_parse:
+        with patch('spotify_imessage.android.extract_track_ids_from_android_export') as mock_parse:
             mock_parse.return_value = ["4iV5W9uYEdYUVa79Axb7Rh", "6rqhFgbbKwnb9MLmUQDhG6"]
             
             # Test that edge cases don't crash the parser
-            result = mock_parse("edge_case_file.txt")
+            result = mock_parse("edge_case_file.txt", None)
             assert isinstance(result, list)
             assert len(result) >= 0
 
     def test_android_vs_imessage_format_comparison(self):
         """Test that Android and iMessage formats are handled differently."""
+        import spotify_imessage.android as android
         imessage_line = "Dec 01, 2022 5:10:27 PM - John Doe: https://open.spotify.com/track/4iV5W9uYEdYUVa79Axb7Rh"
         android_line = "2024-01-15 14:30:22 - John Doe: https://open.spotify.com/track/4iV5W9uYEdYUVa79Axb7Rh"
-        
-        # Mock the format detection functions
-        with patch('spotify_imessage.cli._is_imessage_export_line') as mock_imessage:
-            with patch('spotify_imessage.cli._is_android_export_line') as mock_android:
-                mock_imessage.return_value = lambda line: "Dec " in line or "PM" in line
-                mock_android.return_value = lambda line: "2024-" in line or "Jan " in line
-                
-                assert mock_imessage()(imessage_line) == True
-                assert mock_imessage()(android_line) == False
-                assert mock_android()(android_line) == True
-                assert mock_android()(imessage_line) == False
+        # is_android_export_line matches Android format (YYYY-MM-DD or Jan/21/01 style), not iMessage (Dec 01, 2022 5:10:27 PM)
+        assert android.is_android_export_line(android_line) is True
+        assert android.is_android_export_line(imessage_line) is False
 
 
 class TestAndroidCLIIntegration:

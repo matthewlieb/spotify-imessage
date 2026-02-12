@@ -35,8 +35,8 @@ class ErrorBoundary extends React.Component {
         <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4">
           <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 max-w-2xl w-full shadow-2xl">
             <div className="text-center">
-              <div className="text-6xl mb-4">🦘</div>
-              <h1 className="text-3xl font-bold text-white mb-4">Oops! Zingaroo Hit a Bump</h1>
+              <div className="text-6xl mb-4">🎵</div>
+              <h1 className="text-3xl font-bold text-white mb-4">Oops! SpotifiMessage Hit a Bump</h1>
               <p className="text-gray-300 mb-6">
                 Something went wrong, but don't worry - your data is safe! 
                 This is just a temporary hiccup.

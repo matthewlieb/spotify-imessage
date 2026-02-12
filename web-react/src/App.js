@@ -138,12 +138,25 @@ function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const login = () => {
-    fetch(`${API_BASE}/auth/spotify`, { credentials: 'include' })
-      .then(r => r.json())
-      .then(d => {
-        if (d.auth_url) window.location.href = d.auth_url;
-      });
+  const login = async () => {
+    try {
+      setError('');
+      const response = await fetch(`${API_BASE}/auth/spotify`, { credentials: 'include' });
+      const data = await response.json();
+      
+      if (data.error) {
+        setError(`Login failed: ${data.error}`);
+        console.error('Spotify login error:', data.error);
+      } else if (data.auth_url) {
+        window.location.href = data.auth_url;
+      } else {
+        setError('No authorization URL received from server');
+        console.error('Unexpected response:', data);
+      }
+    } catch (error) {
+      setError(`Network error: ${error.message}`);
+      console.error('Login request failed:', error);
+    }
   };
 
   const scanChats = async () => {
