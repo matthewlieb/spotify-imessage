@@ -388,9 +388,32 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
+def _imessage_scan_available():
+    """Return True if iMessage scanning is available (imessage-exporter installed and chat.db present)."""
+    if not shutil.which('imessage-exporter'):
+        return False
+    chat_db = os.path.expanduser("~/Library/Messages/chat.db")
+    return os.path.isfile(chat_db)
+
+
 def scan_imessage_chats():
     """Scan iMessage database for chats with Spotify links using imessage-exporter pipeline."""
     try:
+        # iMessage scanning only works locally (Mac with imessage-exporter and chat.db)
+        if not _imessage_scan_available():
+            if not shutil.which('imessage-exporter'):
+                return {
+                    'error': (
+                        "iMessage scanning only works on your Mac. "
+                        "Use \"Paste Messages Manually\" below to paste in messages, or run the app locally with ./start.sh"
+                    ),
+                    'scan_available': False
+                }
+            return {
+                'error': "iMessage database not found. Run SpotifiMessage on your Mac to scan, or use \"Paste Messages Manually\" below.",
+                'scan_available': False
+            }
+
         # Check cache first
         cache_key = get_cache_key('imessage_scan')
         cached_chats = get_from_cache(cache_key)
@@ -970,6 +993,12 @@ def get_track_details():
             })
         
         # Use the same method as Smart Detection to get real track data
+        if not _imessage_scan_available():
+            return jsonify({
+                'success': False,
+                'error': 'Loading chats is only available when running SpotifiMessage on your Mac. Use Paste Messages Manually or run the app locally.'
+            }), 400
+
         try:
             # Create a temporary directory for export
             temp_dir = tempfile.mkdtemp(prefix="spotify_track_details_")

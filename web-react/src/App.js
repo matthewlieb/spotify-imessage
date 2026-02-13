@@ -175,7 +175,7 @@ function App() {
       const data = await response.json();
       
       if (data.error) {
-        setError(`Scan failed: ${data.error}`);
+        setError(data.scan_available === false ? data.error : `Scan failed: ${data.error}`);
       } else if (data.chats && data.chats.length > 0) {
         setChats(data.chats);
       } else {
