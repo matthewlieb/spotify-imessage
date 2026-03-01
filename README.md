@@ -4,6 +4,8 @@
 
 Mac app (Electron) that signs in with Spotify, scans your iMessage for Spotify links, and creates a playlist in one flow.
 
+![SpotifiMessage – Select a chat, pick tracks, create playlist](docs/screenshot.png)
+
 ## Download
 
 - **Download page (GitHub Pages):** [matthewlieb.github.io/spotify-imessage](https://matthewlieb.github.io/spotify-imessage/) — pick Apple Silicon or Intel DMG.
