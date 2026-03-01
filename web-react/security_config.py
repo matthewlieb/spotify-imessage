@@ -22,7 +22,7 @@ def _cors_origins():
 
 # Security configuration
 SECURITY_CONFIG = {
-    # CORS settings (production: set CORS_ORIGINS=https://your-netlify-site.netlify.app)
+    # CORS settings (production: set CORS_ORIGINS to your frontend origin, e.g. https://yourusername.github.io)
     'CORS_ORIGINS': _cors_origins(),
     
     # Security headers
@@ -32,7 +32,7 @@ SECURITY_CONFIG = {
         'X-XSS-Protection': '1; mode=block',
         'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
         'Referrer-Policy': 'strict-origin-when-cross-origin',
-        'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://sdk.scdn.co https://accounts.spotify.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://api.spotify.com https://accounts.spotify.com https://*.railway.app; frame-src https://accounts.spotify.com;"
+        'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://sdk.scdn.co https://accounts.spotify.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' http://127.0.0.1:8004 http://localhost:8004 http://127.0.0.1:8005 http://localhost:8005 https://api.spotify.com https://accounts.spotify.com https://*.railway.app; frame-src https://accounts.spotify.com https://sdk.scdn.co;"
     },
     
     # Rate limiting

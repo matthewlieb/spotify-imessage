@@ -19,13 +19,11 @@ from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 import threading
+import requests as requests_lib
 
 # Import resilience systems
 try:
-    from api_resilience import (
-        resilient_api_call, check_system_health, 
-        api_adapter, version_manager, degradation_handler
-    )
+    from api_resilience import check_system_health
     RESILIENCE_AVAILABLE = True
 except ImportError:
     RESILIENCE_AVAILABLE = False
@@ -44,12 +42,9 @@ except ImportError:
 try:
     from security_config import (
         SECURITY_CONFIG, get_secure_session_config, secure_headers,
-        validate_spotify_credentials, log_security_event
+        validate_spotify_credentials
     )
-    from error_handler import (
-        handle_api_error, handle_spotify_error, handle_file_error,
-        safe_api_call, register_error_handlers, log_request_info
-    )
+    from error_handler import handle_api_error, register_error_handlers
     SECURITY_AVAILABLE = True
 except ImportError:
     SECURITY_AVAILABLE = False
@@ -57,14 +52,22 @@ except ImportError:
 
 # Configure logging: INFO in production to reduce I/O; DEBUG only when FLASK_DEBUG=1
 _log_level = logging.DEBUG if os.getenv('FLASK_DEBUG') == '1' else logging.INFO
-logging.basicConfig(
-    level=_log_level,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('flask_server.log')
-    ]
-)
+_handlers = [logging.StreamHandler()]
+# In production/packaged app, app bundle may be read-only — write log to a writable path
+if os.getenv('FLASK_ENV') == 'production':
+    try:
+        import tempfile
+        _log_dir = os.path.join(tempfile.gettempdir(), 'SpotifiMessage')
+        os.makedirs(_log_dir, exist_ok=True)
+        _handlers.append(logging.FileHandler(os.path.join(_log_dir, 'flask_server.log')))
+    except Exception:
+        pass
+else:
+    try:
+        _handlers.append(logging.FileHandler('flask_server.log'))
+    except Exception:
+        pass
+logging.basicConfig(level=_log_level, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', handlers=_handlers)
 logger = logging.getLogger(__name__)
 import queue
 
@@ -86,7 +89,7 @@ except ImportError:
     print("Warning: redis not available. Caching disabled.")
 
 # Session management for OAuth
-from flask import session, redirect, url_for
+from flask import session, redirect
 import secrets
 
 # Disable Flask's default static folder since we're serving from build/ directory
@@ -105,13 +108,12 @@ if SECURITY_AVAILABLE:
     # Register error handlers
     register_error_handlers(app)
     
-    # Validate Spotify credentials
+    # Check Spotify credentials (warn only; allow app to start for packaged/setup flow)
     try:
         validate_spotify_credentials()
         logger.info("✅ Spotify credentials validated")
     except ValueError as e:
-        logger.error(f"❌ Spotify credentials validation failed: {e}")
-        raise
+        logger.warning(f"Spotify credentials not set: {e}. App will start; add .env to configure.")
 else:
     # Basic CORS for development
     CORS(app, supports_credentials=True, origins=['http://localhost:3000', 'http://127.0.0.1:3000'])
@@ -176,6 +178,21 @@ oauth_states = {}
 # Store temporary auth tokens (in production, use Redis or database)
 temp_auth_tokens = {}
 
+# Companion scan flow: request_id -> result (chats) or None if pending. TTL 5 min.
+import time
+import uuid
+_scan_requests = {}  # request_id -> { 'created': ts }
+_scan_results = {}   # request_id -> { 'chats': [...] }
+_SCAN_REQUEST_TTL = 300  # 5 minutes
+
+def _cleanup_old_scan_requests():
+    """Remove scan requests and results older than TTL."""
+    now = time.time()
+    for rid in list(_scan_requests.keys()):
+        if now - _scan_requests[rid].get('created', 0) > _SCAN_REQUEST_TTL:
+            _scan_requests.pop(rid, None)
+            _scan_results.pop(rid, None)
+
 # Spotify configuration
 SPOTIFY_CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID')
 SPOTIFY_CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET')
@@ -185,9 +202,15 @@ SPOTIFY_REDIRECT_URI = os.getenv('SPOTIFY_REDIRECT_URI', 'http://127.0.0.1:8004/
 # Note: Spotify no longer supports 'localhost' - must use '127.0.0.1' for local dev
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://127.0.0.1:3000')
 
-# Validate required environment variables
+# Log Spotify OAuth configuration for debugging (after logger is initialized)
+if 'logger' in globals():
+    logger.info(f"🔐 Spotify OAuth Config - Redirect URI: {SPOTIFY_REDIRECT_URI}")
+    logger.info(f"🔐 Spotify OAuth Config - Frontend URL: {FRONTEND_URL}")
+    logger.info(f"🔐 Spotify OAuth Config - Client ID: {SPOTIFY_CLIENT_ID[:10]}..." if SPOTIFY_CLIENT_ID else "🔐 Spotify OAuth Config - Client ID: NOT SET")
+
+# Spotify credentials optional at startup (required for OAuth; app can show setup instructions)
 if not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_SECRET:
-    raise ValueError("SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET must be set in environment variables")
+    logger.warning("SPOTIFY_CLIENT_ID and/or SPOTIFY_CLIENT_SECRET not set. Add a .env file in web-react (or set env vars) to use Spotify.")
 
 # OAuth scope for Spotify
 SPOTIFY_SCOPE = "playlist-modify-public playlist-modify-private playlist-read-private user-read-private"
@@ -287,10 +310,11 @@ def get_spotify_client():
         return None
 
 def get_spotify_oauth():
-    """Get Spotify OAuth manager."""
+    """Get Spotify OAuth manager. Returns None if spotipy unavailable or credentials not set."""
     if not SPOTIFY_AVAILABLE:
         return None
-    
+    if not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_SECRET:
+        return None
     return SpotifyOAuth(
         client_id=SPOTIFY_CLIENT_ID,
         client_secret=SPOTIFY_CLIENT_SECRET,
@@ -388,6 +412,22 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
+def _extract_spotify_track_ids_from_text(text):
+    """Extract unique Spotify track IDs from text (URLs or spotify: URIs). Only tracks, not albums/playlists."""
+    # Match open.spotify.com/track/ID and spotify:track:ID only
+    pattern = re.compile(
+        r'(?:open|www|embed)\.spotify\.com/track/([A-Za-z0-9]{22})|'
+        r'spotify:track:([A-Za-z0-9]{22})',
+        re.IGNORECASE
+    )
+    ids = set()
+    for m in pattern.finditer(text):
+        tid = (m.group(1) or m.group(2))
+        if tid and len(tid) == 22:
+            ids.add(tid)
+    return list(ids)
+
+
 def _imessage_scan_available():
     """Return True if iMessage scanning is available (imessage-exporter installed and chat.db present)."""
     if not shutil.which('imessage-exporter'):
@@ -404,13 +444,13 @@ def scan_imessage_chats():
             if not shutil.which('imessage-exporter'):
                 return {
                     'error': (
-                        "iMessage scanning only works on your Mac. "
-                        "Use \"Paste Messages Manually\" below to paste in messages, or run the app locally with ./start.sh"
+                        "iMessage scanning only works when the app runs on your Mac. "
+                        "Here you can use \"Upload Export File\" (export on your Mac with imessage-exporter, then upload the .txt) or \"Paste Messages Manually\"."
                     ),
                     'scan_available': False
                 }
             return {
-                'error': "iMessage database not found. Run SpotifiMessage on your Mac to scan, or use \"Paste Messages Manually\" below.",
+                'error': "iMessage database not found. Use \"Upload Export File\" or \"Paste Messages Manually\" below.",
                 'scan_available': False
             }
 
@@ -588,14 +628,123 @@ def run_spotify_message_command(command_type, options, chat_name=None):
         return {'error': f'Error running command: {str(e)}'}
 
 
+# Proxy to Electron's native API server (8005) so the renderer stays same-origin (no CSP cross-origin)
+NATIVE_PROXY_BASE = 'http://127.0.0.1:8005'
+
+def _proxy_to_native(path, method='POST'):
+    """Proxy request to native server on 8005. Returns (response_data, status_code)."""
+    url = f'{NATIVE_PROXY_BASE}{path}'
+    try:
+        if method == 'POST':
+            r = requests_lib.post(url, json=request.get_json(silent=True) or {}, timeout=120)
+        else:
+            r = requests_lib.get(url, timeout=30)
+        return r.json() if r.headers.get('content-type', '').startswith('application/json') else {}, r.status_code
+    except requests_lib.RequestException as e:
+        logger.warning(f"Native proxy error {path}: {e}")
+        return {'error': str(e)}, 502
+
+@app.route('/api/native/scan-imessage', methods=['POST'])
+def native_scan_imessage():
+    """Proxy to native iMessage scan (Electron Express on 8005). Same-origin for CSP."""
+    data, status = _proxy_to_native('/api/native/scan-imessage', 'POST')
+    return jsonify(data), status
+
+@app.route('/api/native/track-details', methods=['POST'])
+def native_track_details():
+    """Proxy to native track-details (Electron Express on 8005). Same-origin for CSP."""
+    data, status = _proxy_to_native('/api/native/track-details', 'POST')
+    return jsonify(data), status
+
 @app.route('/api/scan-imessage', methods=['POST'])
 def scan_imessage():
-    """Scan iMessage database for chats with Spotify links."""
+    """Scan iMessage database for chats with Spotify links. If not available (e.g. on Railway), creates a companion scan request."""
     try:
         result = scan_imessage_chats()
+        # If scan not available, create a request ID so companion app can fulfill it
+        if result.get('scan_available') is False and 'error' in result:
+            _cleanup_old_scan_requests()
+            request_id = str(uuid.uuid4())
+            _scan_requests[request_id] = {'created': time.time()}
+            result['scan_request_id'] = request_id
+            result['companion_instructions'] = (
+                'Run the SpotifiMessage companion on your Mac and enter this Request ID. '
+                'It will export your iMessages and send them here automatically.'
+            )
         return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/scan-status/<request_id>', methods=['GET'])
+def scan_status(request_id):
+    """Poll for companion upload result. Returns pending or chats when ready."""
+    _cleanup_old_scan_requests()
+    if request_id not in _scan_requests:
+        return jsonify({'error': 'Unknown or expired request ID'}), 404
+    if request_id in _scan_results:
+        return jsonify({'status': 'ready', 'chats': _scan_results[request_id]['chats']})
+    return jsonify({'status': 'pending'})
+
+
+@app.route('/api/scan-upload', methods=['POST'])
+def scan_upload():
+    """Parse an uploaded iMessage export (.txt) for Spotify links. Optional scan_request_id for companion flow."""
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        if not file.filename.lower().endswith('.txt'):
+            return jsonify({'error': 'Please upload a .txt file (e.g. from imessage-exporter)'}), 400
+
+        content = file.read().decode('utf-8', errors='replace')
+
+        # Support merged upload from companion: "--- SPOTIFIMESSAGE_CHAT: name ---\n\ncontent"
+        request_id = request.form.get('scan_request_id') or request.args.get('scan_request_id')
+        chats = []
+        if '--- SPOTIFIMESSAGE_CHAT:' in content and request_id:
+            for part in content.split('--- SPOTIFIMESSAGE_CHAT:')[1:]:
+                part = part.strip()
+                if not part:
+                    continue
+                first_line, _, rest = part.partition('\n')
+                chat_name = first_line.replace('---', '').strip().rstrip('.txt')
+                track_ids = _extract_spotify_track_ids_from_text(rest)
+                if track_ids:
+                    chats.append({
+                        'name': chat_name,
+                        'type': 'upload',
+                        'trackCount': len(track_ids),
+                        'trackIds': track_ids,
+                        'lastActivity': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    })
+        if not chats:
+            track_ids = _extract_spotify_track_ids_from_text(content)
+            if not track_ids:
+                return jsonify({'error': 'No Spotify track links found in the file'}), 400
+            chat_name = file.filename[:-4] if file.filename.lower().endswith('.txt') else file.filename
+            chats = [{
+                'name': chat_name,
+                'type': 'upload',
+                'trackCount': len(track_ids),
+                'trackIds': track_ids,
+                'lastActivity': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }]
+
+        chats.sort(key=lambda x: x['trackCount'], reverse=True)
+
+        # Companion flow: store result for this request_id so frontend poll gets it
+        if request_id and request_id in _scan_requests:
+            _scan_results[request_id] = {'chats': chats}
+            logger.info(f"Companion uploaded result for request_id={request_id} ({len(chats)} chats)")
+
+        return jsonify({'success': True, 'chats': chats})
+    except Exception as e:
+        logger.exception("scan-upload failed")
+        return jsonify({'error': str(e)}), 500
+
 
 @app.route('/api/playlist/search', methods=['POST'])
 def search_playlist():
@@ -894,40 +1043,43 @@ def get_stats():
 
 @app.route('/api/health')
 def health_check():
-    """Health check endpoint with resilience status."""
-    logger.info("Health check endpoint called")
+    """Lightweight health check (no Spotify call). Use ?full=1 for resilience status."""
     try:
         response = {'status': 'healthy', 'timestamp': datetime.now().isoformat()}
-        
-        # Add resilience status if available
-        if RESILIENCE_AVAILABLE:
-            try:
-                system_health = check_system_health()
-                response['resilience'] = {
-                    'api_status': system_health.get('api_status', 'unknown'),
-                    'compatibility': system_health.get('compatibility', {}),
-                    'degradation_mode': False
-                }
-            except Exception as resilience_error:
-                logger.warning(f"Resilience check failed: {resilience_error}")
-                response['resilience'] = {'error': 'Resilience check unavailable'}
-        else:
-            response['resilience'] = {'status': 'basic_mode'}
-        
-        logger.info(f"Health check response: {response}")
-
+        if request.args.get('full'):
+            if RESILIENCE_AVAILABLE:
+                try:
+                    system_health = check_system_health()
+                    response['resilience'] = {
+                        'api_status': system_health.get('api_status', 'unknown'),
+                        'compatibility': system_health.get('compatibility', {}),
+                        'degradation_mode': False
+                    }
+                except Exception as resilience_error:
+                    response['resilience'] = {'error': str(resilience_error)}
+            else:
+                response['resilience'] = {'status': 'basic_mode'}
         json_response = jsonify(response)
-        
-        # Add security headers if available
         if SECURITY_AVAILABLE:
             for header, value in secure_headers().items():
                 json_response.headers[header] = value
-
         return json_response
     except Exception as e:
         logger.error(f"Health check error: {e}")
-        logger.error(traceback.format_exc())
         return handle_api_error(e, "Health check failed")
+
+@app.route('/api/debug/oauth-config')
+def debug_oauth_config():
+    """Debug endpoint: OAuth config (no secrets). Disabled in production."""
+    if os.getenv('FLASK_ENV') == 'production':
+        return jsonify({'error': 'Not available'}), 404
+    return jsonify({
+        'redirect_uri': SPOTIFY_REDIRECT_URI,
+        'frontend_url': FRONTEND_URL,
+        'client_id': SPOTIFY_CLIENT_ID[:10] + '...' if SPOTIFY_CLIENT_ID else None,
+        'client_secret_set': bool(SPOTIFY_CLIENT_SECRET),
+        'spotify_available': SPOTIFY_AVAILABLE
+    })
 
 @app.route('/api/track-details', methods=['POST'])
 def get_track_details():
@@ -1252,7 +1404,9 @@ def spotify_login():
     try:
         oauth = get_spotify_oauth()
         if not oauth:
-            return jsonify({'error': 'Spotify OAuth not available'}), 500
+            return jsonify({
+                'error': 'Spotify credentials not configured. Add SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET to a .env file in the app\'s web-react folder (Right-click SpotifiMessage.app → Show Package Contents → Contents/Resources/web-react), or set them in your environment.'
+            }), 503
         
         # Generate state parameter for security
         state = secrets.token_urlsafe(32)
@@ -1270,6 +1424,7 @@ def spotify_login():
         
         logger.info(f"Generated OAuth state: {state}")
         logger.info(f"Authorization URL: {auth_url}")
+        logger.info(f"Using redirect URI: {SPOTIFY_REDIRECT_URI}")
         logger.info(f"Session ID: {session.get('_id', 'No session ID')}")
         
         return jsonify({

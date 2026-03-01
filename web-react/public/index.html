@@ -14,9 +14,8 @@
       content="Extract Spotify links from your messages and create playlists automatically. Works on macOS and iOS."
     />
     <!-- Content Security Policy - allow unsafe-eval for OAuth flows -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://sdk.scdn.co https://accounts.spotify.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://api.spotify.com https://accounts.spotify.com https://*.railway.app; frame-src https://accounts.spotify.com;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://sdk.scdn.co https://accounts.spotify.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' http://127.0.0.1:8004 http://localhost:8004 http://127.0.0.1:8005 http://localhost:8005 https://api.spotify.com https://accounts.spotify.com; frame-src https://accounts.spotify.com https://sdk.scdn.co;">
     <link rel="apple-touch-icon" href="%PUBLIC_URL%/icon-192.png" />
-    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
     <title>SpotifiMessage - Find Music in Your Messages</title>
     <!-- Spotify Web Playback SDK -->
     <script src="https://sdk.scdn.co/spotify-player.js"></script>

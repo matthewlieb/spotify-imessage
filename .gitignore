@@ -54,13 +54,11 @@ Thumbs.db
 **/flask_server.log
 **/flask.log
 
-# Netlify
-.netlify/
-
 # Build outputs
 build/
 dist/
 *.egg-info/
+electron/python-bundle/
 
 # Temporary files
 *.tmp

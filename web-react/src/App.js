@@ -10,13 +10,16 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import './index.css';
-import { initializePWAInstall, promptInstall } from './pwa-install';
+// Detect if running in Electron (Mac app)
+const isElectron = window.electron?.isElectron || false;
 
-// Dynamic API base - works for both development and production
-const API_BASE = process.env.REACT_APP_API_BASE || 
-  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
-    ? 'http://localhost:8004/api' 
-    : '/api');
+// API base: same-origin when served from Flask (port 8004), else explicit or relative
+const API_BASE = process.env.REACT_APP_API_BASE ||
+  (window.location.port === '8004' ? '/api' : // Mac app / Flask-served build
+   (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+     ? 'http://127.0.0.1:8004/api'  // React dev server (localhost:3000) talking to Flask
+     : '/api'));
+// In Electron, native APIs are proxied via Flask (/api/native/*) so we stay same-origin (no CSP)
 
 function App() {
   // Auth state
@@ -43,10 +46,12 @@ function App() {
   const [showPasteInput, setShowPasteInput] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
 
-  // Initialize PWA and detect mobile
+  // Companion scan: request ID when waiting for Mac app to upload
+  const [companionScanRequestId, setCompanionScanRequestId] = useState(null);
+  const pollingRef = useRef(null);
+
+  // Detect mobile device
   useEffect(() => {
-    initializePWAInstall();
-    
     // Detect mobile device
     const checkMobile = () => {
       setIsMobile(/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || 
@@ -126,8 +131,34 @@ function App() {
           }
         })
         .catch(() => {
-          setError('Authentication failed. Please try logging in again.');
-          window.history.replaceState({}, '', '/');
+          // Session fetch failed (e.g. cross-origin in Electron) - try token exchange
+          const token = params.get('token');
+          if (token) {
+            fetch(`${API_BASE}/auth/exchange-token`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({ token })
+            })
+              .then(r => r.json())
+              .then(d => {
+                if (d.success) {
+                  setAuth(true);
+                  setUser(d.user);
+                  setError('');
+                } else {
+                  setError('Authentication failed. Please try logging in again.');
+                }
+                window.history.replaceState({}, '', '/');
+              })
+              .catch(() => {
+                setError('Authentication failed. Please try logging in again.');
+                window.history.replaceState({}, '', '/');
+              });
+          } else {
+            setError('Authentication failed. Please try logging in again.');
+            window.history.replaceState({}, '', '/');
+          }
         });
     } else if (authStatus === 'error') {
       callbackHandled.current = true;
@@ -141,23 +172,60 @@ function App() {
   const login = async () => {
     try {
       setError('');
+      // Electron: main process fetches auth URL and navigates (bypasses CSP)
+      if (window.electron?.startSpotifyLogin) {
+        const result = await window.electron.startSpotifyLogin();
+        if (result?.error) {
+          setError(result.error === 'No window' ? 'Please try again.' : `Login failed: ${result.error}`);
+        }
+        return;
+      }
+      if (window.electron?.getSpotifyAuthUrl) {
+        const data = await window.electron.getSpotifyAuthUrl();
+        if (data.error) {
+          setError(`Login failed: ${data.error}`);
+          return;
+        }
+        if (data.auth_url) {
+          window.location.href = data.auth_url;
+          return;
+        }
+      }
       const response = await fetch(`${API_BASE}/auth/spotify`, { credentials: 'include' });
       const data = await response.json();
-      
       if (data.error) {
         setError(`Login failed: ${data.error}`);
-        console.error('Spotify login error:', data.error);
       } else if (data.auth_url) {
         window.location.href = data.auth_url;
       } else {
         setError('No authorization URL received from server');
-        console.error('Unexpected response:', data);
       }
     } catch (error) {
       setError(`Network error: ${error.message}`);
       console.error('Login request failed:', error);
     }
   };
+
+  // Poll for companion upload result when we have a scan_request_id
+  useEffect(() => {
+    if (!companionScanRequestId) return;
+    const poll = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/scan-status/${companionScanRequestId}`, { credentials: 'include' });
+        const data = await res.json();
+        if (data.status === 'ready' && data.chats?.length > 0) {
+          setChats(data.chats);
+          setCompanionScanRequestId(null);
+          setScanning(false);
+          setError('');
+          if (pollingRef.current) clearInterval(pollingRef.current);
+        }
+      } catch (_) { /* ignore */ }
+    };
+    poll();
+    pollingRef.current = setInterval(poll, 2500);
+    return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
+  }, [companionScanRequestId]);
 
   const scanChats = async () => {
     setScanning(true);
@@ -166,9 +234,13 @@ function App() {
     setTracks([]);
     setSelectedTracks(new Set());
     setError('');
+    setCompanionScanRequestId(null);
     
     try {
-      const response = await fetch(`${API_BASE}/scan-imessage`, {
+      // In Electron use same-origin /api/native/scan-imessage (Flask proxies to Express on 8005)
+      const apiUrl = isElectron ? `${API_BASE}/native/scan-imessage` : `${API_BASE}/scan-imessage`;
+      
+      const response = await fetch(apiUrl, {
         method: 'POST',
         credentials: 'include'
       });
@@ -176,15 +248,70 @@ function App() {
       
       if (data.error) {
         setError(data.scan_available === false ? data.error : `Scan failed: ${data.error}`);
+        if (data.scan_request_id) {
+          setCompanionScanRequestId(data.scan_request_id);
+          setError(''); // clear error so we show companion box instead
+        } else {
+          setScanning(false);
+        }
       } else if (data.chats && data.chats.length > 0) {
         setChats(data.chats);
+        setScanning(false);
       } else {
-        setError('No chats with Spotify tracks found');
+        setError(
+          isElectron
+            ? 'No chats with Spotify tracks found. If you have Spotify links in iMessage, grant Full Disk Access: System Settings → Privacy & Security → Full Disk Access → add SpotifiMessage, then scan again.'
+            : 'No chats with Spotify tracks found'
+        );
+        setScanning(false);
       }
     } catch (error) {
       setError(`Error: ${error.message}`);
+      setScanning(false);
+    }
+  };
+
+  const handleScanUpload = async (e) => {
+    const file = e?.target?.files?.[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.txt')) {
+      setError('Please select a .txt file (e.g. from imessage-exporter on your Mac)');
+      return;
+    }
+    setScanning(true);
+    setError('');
+    setChats([]);
+    setSelectedChat(null);
+    setTracks([]);
+    setSelectedTracks(new Set());
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const response = await fetch(`${API_BASE}/scan-upload`, {
+        method: 'POST',
+        credentials: 'include',
+        body: formData
+      });
+      const data = await response.json();
+      if (data.error) {
+        setError(data.error);
+        return;
+      }
+      if (data.chats && data.chats.length > 0) {
+        setChats(data.chats);
+        const first = data.chats[0];
+        setSelectedChat(first.name);
+        if (first.trackIds?.length) {
+          await loadTracksFromIds(first.trackIds);
+        } else {
+          await loadTracks(first.name);
+        }
+      }
+    } catch (err) {
+      setError(`Upload failed: ${err.message}`);
     } finally {
       setScanning(false);
+      e.target.value = '';
     }
   };
 
@@ -399,7 +526,8 @@ function App() {
   if (!auth) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-900 via-black to-gray-900">
-        <div className="text-center max-w-md mx-auto p-8">
+        {isElectron && <div className="absolute inset-x-0 top-0 h-12" style={{ WebkitAppRegion: 'drag' }} />}
+        <div className="text-center max-w-md mx-auto p-8" style={isElectron ? { WebkitAppRegion: 'no-drag' } : undefined}>
           <div className="mb-8">
             <h1 className="text-5xl font-bold mb-3 spotify-gradient-text">SpotifiMessage</h1>
             <p className="text-gray-400 text-lg">Turn your messages into playlists</p>
@@ -422,23 +550,17 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-black to-gray-900 text-white">
-      {/* Header */}
-      <div className="border-b border-white/10 bg-black/20 backdrop-blur-sm sticky top-0 z-10">
+      {/* Header: draggable in Electron so window can be moved (titleBarStyle: hiddenInset) */}
+      <div
+        className="border-b border-white/10 bg-black/20 backdrop-blur-sm sticky top-0 z-10"
+        style={isElectron ? { WebkitAppRegion: 'drag' } : undefined}
+      >
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold spotify-gradient-text">SpotifiMessage</h1>
             <p className="text-sm text-gray-400">Logged in as {user?.display_name}</p>
           </div>
-          <div className="flex items-center gap-2">
-            {/* PWA Install Button */}
-            <button
-              id="pwa-install-button"
-              onClick={promptInstall}
-              className="btn-secondary text-sm hidden"
-              style={{ display: 'none' }}
-            >
-              📱 Install App
-            </button>
+          <div className="flex items-center gap-2" style={isElectron ? { WebkitAppRegion: 'no-drag' } : undefined}>
             <button
               onClick={() => {
                 fetch(`${API_BASE}/auth/logout`, { method: 'POST', credentials: 'include' })
@@ -464,7 +586,16 @@ function App() {
 
         {error && (
           <div className="mb-6 p-4 bg-red-500/20 border border-red-500/50 rounded-xl text-red-300">
-            {error}
+            <p className="mb-2">{error}</p>
+            {isElectron && error.includes('Full Disk Access') && window.electron?.openFullDiskAccessSettings && (
+              <button
+                type="button"
+                onClick={() => window.electron.openFullDiskAccessSettings()}
+                className="mt-2 px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm font-medium border border-white/20"
+              >
+                Open System Settings
+              </button>
+            )}
           </div>
         )}
 
@@ -496,6 +627,29 @@ function App() {
               </button>
             )}
           </div>
+
+          {/* Companion: show Request ID and instructions when waiting for Mac app (only in web, not Electron) */}
+          {companionScanRequestId && !isElectron && (
+            <div className="mb-4 p-4 bg-spotify-500/10 border border-spotify-500/30 rounded-xl">
+              <p className="text-sm font-medium text-gray-300 mb-2">Waiting for companion on your Mac</p>
+              <p className="text-xs text-gray-400 mb-2">
+                On your Mac, run the SpotifiMessage companion and enter this Request ID. It will export iMessage and send results here.
+              </p>
+              <div className="flex items-center gap-2 flex-wrap">
+                <code className="px-3 py-2 bg-black/30 rounded font-mono text-sm text-white break-all">
+                  {companionScanRequestId}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => navigator.clipboard?.writeText(companionScanRequestId)}
+                  className="btn-secondary text-xs"
+                >
+                  Copy
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 mt-2">Or use Upload Export File / Paste below instead.</p>
+            </div>
+          )}
 
           {/* Mobile Paste Workflow */}
           {(isMobile || showPasteInput) && (
@@ -540,8 +694,37 @@ function App() {
             </div>
           )}
 
-          {/* Desktop: Show paste option */}
-          {!isMobile && !showPasteInput && (
+          {/* Desktop: Paste and upload options (work on Railway when scan doesn't, hidden in Electron) */}
+          {!isMobile && !showPasteInput && !isElectron && (
+            <div className="mt-4 pt-4 border-t border-white/10 space-y-2">
+              <input
+                type="file"
+                accept=".txt"
+                className="hidden"
+                id="scan-upload-input"
+                onChange={handleScanUpload}
+              />
+              <label
+                htmlFor="scan-upload-input"
+                className="btn-secondary text-sm w-full inline-block text-center cursor-pointer disabled:opacity-50"
+                style={{ pointerEvents: scanning ? 'none' : 'auto' }}
+              >
+                📤 Or Upload Export File (.txt)
+              </label>
+              <p className="text-xs text-gray-500 text-center">
+                Export on your Mac with: <code className="bg-white/10 px-1 rounded">imessage-exporter --format txt</code>, then upload the .txt here.
+              </p>
+              <button
+                onClick={() => setShowPasteInput(true)}
+                className="btn-secondary text-sm w-full"
+              >
+                📋 Or Paste Messages Manually
+              </button>
+            </div>
+          )}
+          
+          {/* Electron: Show paste option (scan works natively, but paste is still useful) */}
+          {!isMobile && !showPasteInput && isElectron && (
             <div className="mt-4 pt-4 border-t border-white/10">
               <button
                 onClick={() => setShowPasteInput(true)}

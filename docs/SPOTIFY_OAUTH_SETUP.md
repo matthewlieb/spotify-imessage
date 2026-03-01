@@ -57,7 +57,7 @@ FLASK_SECRET_KEY=your_secret_key_here
 1. **Start the application**:
    ```bash
    cd web-react
-   ./start.sh  # macOS/Linux
+   ./start-dev.sh  # macOS (Electron app)
    # or
    start.bat   # Windows
    ```
