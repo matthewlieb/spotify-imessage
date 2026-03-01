@@ -54,6 +54,8 @@ This will:
 - **docs/PACKAGING.md** – How to build a DMG for distribution
 - **docs/DISTRIBUTION.md** – Releases, GitHub Pages, and distribution steps
 - **docs/SPOTIFY_OAUTH_SETUP.md** – Spotify app and redirect URI setup
+- **docs/SIGNING_AND_NOTARIZATION.md** – Why you see "damaged", user workaround (`xattr`), and how to sign + notarize with Apple Developer
+- **docs/LIGHTWEIGHT_BUILD.md** – Smaller app: lite build (no bundled Python), DMG compression, trimming the bundle
 
 ## Packaging for distribution
 

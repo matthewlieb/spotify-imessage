@@ -93,6 +93,36 @@
       text-align: left;
     }
     .note strong { color: var(--text); }
+    .note code {
+      background: rgba(0,0,0,0.3);
+      padding: 0.2rem 0.4rem;
+      border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .copy-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-top: 0.35rem;
+    }
+    .copy-row code {
+      flex: 1;
+      margin-top: 0;
+    }
+    .btn-copy {
+      flex-shrink: 0;
+      padding: 0.25rem 0.5rem;
+      font-size: 0.7rem;
+      font-family: inherit;
+      background: var(--accent);
+      color: var(--bg);
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .btn-copy:hover { background: var(--accent-hover); }
+    .btn-copy.copied { background: var(--muted); }
     footer {
       margin-top: 3rem;
       font-size: 0.8rem;
@@ -119,7 +149,17 @@
     </div>
     <p class="tagline" style="margin-top: 0.5rem; margin-bottom: 0; font-size: 0.8rem;" id="release-label"></p>
     <div class="note">
-      <strong>First time?</strong> After opening the app, use <strong>Right‑click → Open</strong> (then click Open in the dialog). macOS may block unsigned apps until you do this once. The full build includes Python; see the release notes on GitHub for details.
+      <strong>First time opening?</strong> Anyone who downloads the app from the web may need to do this once—macOS adds a security flag we can&#39;t remove without Apple Developer signing. Try <strong>Right‑click → Open</strong> first; if macOS says &quot;damaged&quot;, use Terminal:
+      <div class="copy-row">
+        <code id="cmd-downloads">xattr -dr com.apple.quarantine ~/Downloads/SpotifiMessage.app</code>
+        <button type="button" class="btn-copy" data-cmd="cmd-downloads" aria-label="Copy">Copy</button>
+      </div>
+      <span style="display:block; margin-top:0.25rem; font-size:0.8em; opacity:0.9;">If you moved it to Applications:</span>
+      <div class="copy-row">
+        <code id="cmd-apps">xattr -dr com.apple.quarantine /Applications/SpotifiMessage.app</code>
+        <button type="button" class="btn-copy" data-cmd="cmd-apps" aria-label="Copy">Copy</button>
+      </div>
+      Open Terminal (Spotlight → &quot;Terminal&quot;), paste, press Enter, then double‑click the app. The full build includes Python; see the release notes for more.
     </div>
     <footer>
       <a href="https://github.com/matthewlieb/spotify-imessage/releases" target="_blank" rel="noopener">Releases &amp; notes</a>
@@ -164,6 +204,21 @@
           setLinks(releasesUrl + '/latest', releasesUrl + '/latest', '');
           labelEl.textContent = 'Click to open Releases and pick your build.';
         });
+
+      document.querySelectorAll('.btn-copy').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var id = this.getAttribute('data-cmd');
+          var code = document.getElementById(id);
+          var text = code ? code.textContent : '';
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(function () {
+              btn.textContent = 'Copied!';
+              btn.classList.add('copied');
+              setTimeout(function () { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+            });
+          }
+        });
+      });
     })();
   </script>
 </body>
