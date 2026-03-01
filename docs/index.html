@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SpotifiMessage — Download</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0a0a0a;
+      --surface: rgba(255,255,255,0.08);
+      --border: rgba(255,255,255,0.15);
+      --text: #fafafa;
+      --muted: #a1a1aa;
+      --accent: #22c55e;
+      --accent-hover: #4ade80;
+    }
+    * { box-sizing: border-box; }
+    html { font-size: 16px; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: linear-gradient(to bottom right, #111827, #000, #1f2937);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem 1rem;
+      line-height: 1.6;
+    }
+    main {
+      max-width: 440px;
+      width: 100%;
+      text-align: center;
+    }
+    .logo {
+      font-size: 1.75rem;
+      font-weight: 700;
+      background: linear-gradient(90deg, #22c55e, #16a34a);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      letter-spacing: -0.02em;
+      margin-bottom: 0.25rem;
+    }
+    .tagline {
+      color: var(--muted);
+      font-size: 1rem;
+      margin-bottom: 2rem;
+    }
+    .downloads {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+    a.dl {
+      display: block;
+      padding: 1rem 1.5rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      color: var(--text);
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 1rem;
+      transition: border-color 0.2s, background 0.2s, transform 0.15s;
+    }
+    a.dl:hover {
+      border-color: var(--accent);
+      background: rgba(34, 197, 94, 0.12);
+      transform: translateY(-1px);
+    }
+    a.dl .arch {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      font-weight: 400;
+      color: var(--muted);
+      display: block;
+      margin-top: 0.35rem;
+    }
+    .note {
+      margin-top: 2rem;
+      padding: 1rem 1.25rem;
+      background: var(--surface);
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      font-size: 0.875rem;
+      color: var(--muted);
+      text-align: left;
+    }
+    .note strong { color: var(--text); }
+    footer {
+      margin-top: 3rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+    footer a { color: var(--accent); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+    .loading { opacity: 0.7; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1 class="logo">SpotifiMessage</h1>
+    <p class="tagline">Extract Spotify links from iMessage and create playlists</p>
+    <div class="downloads" id="downloads">
+      <a class="dl loading" href="#" id="dl-arm64" data-arch="Apple Silicon (M1/M2/M3)">
+        Download for Mac
+        <span class="arch">Apple Silicon (M1/M2/M3)</span>
+      </a>
+      <a class="dl loading" href="#" id="dl-intel" data-arch="Intel">
+        Download for Mac
+        <span class="arch">Intel</span>
+      </a>
+    </div>
+    <p class="tagline" style="margin-top: 0.5rem; margin-bottom: 0; font-size: 0.8rem;" id="release-label"></p>
+    <div class="note">
+      <strong>First time?</strong> After opening the app, use <strong>Right‑click → Open</strong> (then click Open in the dialog). macOS may block unsigned apps until you do this once. The full build includes Python; see the release notes on GitHub for details.
+    </div>
+    <footer>
+      <a href="https://github.com/matthewlieb/spotify-imessage/releases" target="_blank" rel="noopener">Releases &amp; notes</a>
+      &nbsp;·&nbsp;
+      <a href="https://github.com/matthewlieb/spotify-imessage" target="_blank" rel="noopener">Source</a>
+    </footer>
+  </main>
+  <script>
+    (function () {
+      var REPO = 'matthewlieb/spotify-imessage';
+      var apiUrl = 'https://api.github.com/repos/' + REPO + '/releases/latest';
+      var releasesUrl = 'https://github.com/' + REPO + '/releases';
+      var armEl = document.getElementById('dl-arm64');
+      var intelEl = document.getElementById('dl-intel');
+      var labelEl = document.getElementById('release-label');
+
+      function setLinks(arm64Url, intelUrl, tagName) {
+        armEl.href = arm64Url || (releasesUrl + '/latest');
+        intelEl.href = intelUrl || (releasesUrl + '/latest');
+        armEl.classList.remove('loading');
+        intelEl.classList.remove('loading');
+        if (tagName) labelEl.textContent = 'Latest: ' + tagName;
+      }
+
+      fetch(apiUrl, { headers: { Accept: 'application/vnd.github.v3+json' } })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (!data.assets || !data.assets.length) {
+            setLinks(null, null, data.tag_name || '');
+            return;
+          }
+          var arm64 = null, intel = null;
+          for (var i = 0; i < data.assets.length; i++) {
+            var name = data.assets[i].name || '';
+            var url = data.assets[i].browser_download_url;
+            if (name.indexOf('arm64') !== -1 && name.endsWith('.dmg')) arm64 = url;
+            else if (name.endsWith('.dmg') && name.indexOf('arm64') === -1) intel = url;
+          }
+          setLinks(arm64, intel, data.tag_name || '');
+        })
+        .catch(function () {
+          setLinks(releasesUrl + '/latest', releasesUrl + '/latest', '');
+          labelEl.textContent = 'Click to open Releases and pick your build.';
+        });
+    })();
+  </script>
+</body>
+</html>
